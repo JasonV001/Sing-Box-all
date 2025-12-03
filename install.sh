@@ -559,8 +559,11 @@ setup_relay() {
     while true; do
         echo ""
         echo -e "${CYAN}中转配置菜单:${NC}"
+        echo ""
         echo -e "  ${GREEN}[1]${NC} 设置/修改中转上游（SOCKS5 / HTTP(S)）"
+        echo ""
         echo -e "  ${GREEN}[2]${NC} 选择要走中转的节点（按端口）"
+        echo ""
         echo -e "  ${GREEN}[0]${NC} 返回主菜单"
         echo ""
         read -p "请选择 [0-2]: " r_choice
@@ -738,10 +741,15 @@ show_main_menu() {
     echo -e "  ${YELLOW}当前出站: ${GREEN}${outbound_desc}${NC}"
     echo ""
     echo -e "  ${GREEN}[1]${NC} 添加/继续添加节点"
+    echo ""
     echo -e "  ${GREEN}[2]${NC} 设置中转（SOCKS5 / HTTP(S)）"
+    echo ""
     echo -e "  ${GREEN}[3]${NC} 删除中转，恢复直连"
+    echo ""
     echo -e "  ${GREEN}[4]${NC} 配置 / 查看节点"
+    echo ""
     echo -e "  ${GREEN}[5]${NC} 一键删除脚本并退出"
+    echo ""
     echo -e "  ${GREEN}[0]${NC} 退出脚本"
     echo ""
 }
@@ -1036,26 +1044,31 @@ show_result() {
     echo -e "  重启服务: ${CYAN}systemctl restart sing-box${NC}"
     echo -e "  停止服务: ${CYAN}systemctl stop sing-box${NC}"
     echo ""
-    echo -e "${GREEN}💡  ${YELLOW}https://${AUTHOR_BLOG}${NC}"
-    echo -e "${GREEN}📧 ${YELLOW}${NC}"
-    echo ""
 }
 
 config_and_view_menu() {
     while true; do
         show_banner
         echo -e "${CYAN}╔═══════════════════════════════════════════════════════╗${NC}"
-        echo -e "${CYAN}║              ${GREEN}配置 / 查看节点菜单${CYAN}              ║${NC}"
+        echo -e "${CYAN}║              ${GREEN}配置 / 查看节点菜单${CYAN}        ║${NC}"
         echo -e "${CYAN}╚═══════════════════════════════════════════════════════╝${NC}"
         echo ""
         echo -e "  ${GREEN}[1]${NC} 生成配置并启动服务（当前所有节点）"
+        echo ""
         echo -e "  ${GREEN}[2]${NC} 查看全部节点链接"
+        echo ""
         echo -e "  ${GREEN}[3]${NC} 查看 Reality 节点"
+        echo ""
         echo -e "  ${GREEN}[4]${NC} 查看 Hysteria2 节点"
+        echo ""
         echo -e "  ${GREEN}[5]${NC} 查看 SOCKS5 节点"
+        echo ""
         echo -e "  ${GREEN}[6]${NC} 查看 ShadowTLS 节点"
+        echo ""
         echo -e "  ${GREEN}[7]${NC} 查看 HTTPS 节点"
+        echo ""
         echo -e "  ${GREEN}[8]${NC} 查看 AnyTLS 节点"
+        echo ""
         echo -e "  ${GREEN}[0]${NC} 返回主菜单"
         echo ""
 
