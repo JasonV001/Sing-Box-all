@@ -15,8 +15,9 @@ wget -O /root/install.sh https://raw.githubusercontent.com/JasonV001/singbox-ins
 | **SOCKS5** | 通用兼容 | ⭐⭐⭐ |
 | **AnyTLS** | 通用TLS | ⭐⭐⭐ |
 
-
-  查看状态: systemctl status sing-box
-  查看日志: journalctl -u sing-box -f
-  重启服务: systemctl restart sing-box
-  停止服务: systemctl stop sing-box
+```
+查看状态: systemctl status sing-box
+查看日志: journalctl -u sing-box -f
+重启服务: systemctl restart sing-box
+停止服务: systemctl stop sing-box
+```
