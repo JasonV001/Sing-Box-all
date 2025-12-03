@@ -672,7 +672,7 @@ show_menu() {
         show_banner
         echo -e "${YELLOW}请选择要添加的协议节点:${NC}"
         echo ""
-        echo -e "${GREEN}[1]${NC} VlessReality ${YELLOW}(⭐ 强烈推荐)${NC}${CYAN}→ 抗审查最强，伪装真实TLS，无需证书${NC}"
+        echo -e "${GREEN}[1]${NC} VlessReality ${CYAN}→ 抗审查最强，伪装真实TLS，无需证书${NC} ${YELLOW}(⭐ 强烈推荐)${NC}"
         echo ""
         echo -e "${GREEN}[2]${NC} Hysteria2 ${CYAN}→ 基于QUIC，速度快，垃圾线路专用，适合高延迟网络${NC}"
         echo ""
