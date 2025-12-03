@@ -1,7 +1,7 @@
 ## 🚀 一键安装
 
 ```
-wget -O /root/install.sh https://raw.githubusercontent.com/JasonV001/singbox-install/main/install.sh && bash /root/install.sh
+wget -O /root/install.sh https://raw.githubusercontent.com/JasonV001/singbox-all/main/install.sh && bash /root/install.sh
 ```
 
 ## ✨ 支持协议
