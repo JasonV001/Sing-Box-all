@@ -1,6 +1,8 @@
-# 🚀 Sing-Box 一键安装脚本 v2.2.1
+## 🚀 一键安装
 
-一键安装和配置 Sing-Box，支持 6 种主流协议和中转功能。
+```
+wget -O /root/install.sh https://raw.githubusercontent.com/JasonV001/singbox-install/main/install.sh && bash /root/install.sh
+```
 
 ## ✨ 支持协议
 
@@ -13,7 +15,8 @@
 | **SOCKS5** | 通用兼容 | ⭐⭐⭐ |
 | **AnyTLS** | 通用TLS | ⭐⭐⭐ |
 
-## 🚀 一键安装
 
-```bash
-wget -O /root/install.sh https://raw.githubusercontent.com/JasonV001/singbox-install/main/install.sh && bash /root/install.sh
+  查看状态: systemctl status sing-box
+  查看日志: journalctl -u sing-box -f
+  重启服务: systemctl restart sing-box
+  停止服务: systemctl stop sing-box
