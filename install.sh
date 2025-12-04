@@ -43,6 +43,8 @@ INBOUND_PORTS=()
 INBOUND_PROTOS=()
 INBOUND_RELAY_FLAGS=()
 
+RELAY_JSON=""
+
 print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 print_success() { echo -e "${GREEN}[✓]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[!]${NC} $1"; }
@@ -154,6 +156,8 @@ save_links_to_files() {
 
 # 从文件加载链接
 load_links_from_files() {
+    mkdir -p "${LINK_DIR}"
+    
     if [[ -f "${ALL_LINKS_FILE}" ]]; then
         ALL_LINKS_TEXT=$(cat "${ALL_LINKS_FILE}")
     fi
@@ -322,6 +326,95 @@ regenerate_links_from_config() {
     save_links_to_files
 }
 
+# 从配置文件加载 INBOUNDS_JSON 等变量
+load_config_to_vars() {
+    print_info "正在从配置文件加载配置..."
+    
+    if [[ ! -f "${CONFIG_FILE}" ]]; then
+        print_warning "配置文件不存在"
+        return 1
+    fi
+    
+    # 清空变量
+    INBOUNDS_JSON=""
+    INBOUND_TAGS=()
+    INBOUND_PORTS=()
+    INBOUND_PROTOS=()
+    INBOUND_RELAY_FLAGS=()
+    
+    # 检查 jq 是否可用
+    if ! command -v jq &>/dev/null; then
+        print_warning "jq命令未安装，无法解析配置文件"
+        return 1
+    fi
+    
+    # 获取 inbounds 数量
+    local inbounds_count=$(jq '.inbounds | length' "${CONFIG_FILE}" 2>/dev/null || echo "0")
+    
+    if [[ "$inbounds_count" -eq 0 ]]; then
+        print_warning "配置文件中没有找到inbounds"
+        return 1
+    fi
+    
+    print_info "从配置文件加载 ${inbounds_count} 个inbound配置"
+    
+    # 构建 INBOUNDS_JSON
+    local inbounds_array=()
+    
+    for ((i=0; i<inbounds_count; i++)); do
+        local inbound=$(jq -c ".inbounds[${i}]" "${CONFIG_FILE}" 2>/dev/null)
+        
+        if [[ -z "$inbound" ]]; then
+            continue
+        fi
+        
+        # 添加到 INBOUNDS_JSON
+        if [[ ${#inbounds_array[@]} -eq 0 ]]; then
+            inbounds_array+=("$inbound")
+        else
+            inbounds_array+=(",$inbound")
+        fi
+        
+        # 提取信息到数组
+        local tag=$(echo "$inbound" | jq -r '.tag' 2>/dev/null)
+        local port=$(echo "$inbound" | jq -r '.listen_port' 2>/dev/null)
+        local type=$(echo "$inbound" | jq -r '.type' 2>/dev/null)
+        
+        INBOUND_TAGS+=("$tag")
+        INBOUND_PORTS+=("$port")
+        INBOUND_PROTOS+=("$type")
+        INBOUND_RELAY_FLAGS+=(0)  # 默认直连
+    done
+    
+    # 构建完整的 INBOUNDS_JSON
+    INBOUNDS_JSON=$(printf '%s' "${inbounds_array[@]}")
+    
+    # 加载中转配置
+    if jq -e '.outbounds[] | select(.tag == "relay")' "${CONFIG_FILE}" >/dev/null 2>&1; then
+        RELAY_JSON=$(jq -c '.outbounds[] | select(.tag == "relay")' "${CONFIG_FILE}")
+        OUTBOUND_TAG="relay"
+        
+        # 尝试获取路由规则，确定哪些inbound走中转
+        local rule_inbounds=$(jq -r '.route.rules[0].inbound[]?' "${CONFIG_FILE}" 2>/dev/null)
+        if [[ -n "$rule_inbounds" ]]; then
+            while IFS= read -r inbound_tag; do
+                for idx in "${!INBOUND_TAGS[@]}"; do
+                    if [[ "${INBOUND_TAGS[$idx]}" == "$inbound_tag" ]]; then
+                        INBOUND_RELAY_FLAGS[$idx]=1
+                        break
+                    fi
+                done
+            done <<< "$rule_inbounds"
+        fi
+    else
+        RELAY_JSON=""
+        OUTBOUND_TAG="direct"
+    fi
+    
+    print_success "配置加载完成"
+    return 0
+}
+
 # 清理链接文件
 cleanup_links() {
     print_info "清理所有链接文件..."
@@ -407,7 +500,6 @@ setup_reality() {
     else
         INBOUNDS_JSON="${INBOUNDS_JSON},${inbound}"
     fi
-    INBOUND_JSON="$inbound"
     
     LINK="vless://${UUID}@${SERVER_IP}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI}&fp=chrome&pbk=${REALITY_PUBLIC}&sid=${SHORT_ID}&type=tcp#${AUTHOR_BLOG}"
     
@@ -450,6 +542,12 @@ setup_hysteria2() {
     "key_path": "'${CERT_DIR}'/private.key"
   }
 }'
+    
+    if [[ -z "$INBOUNDS_JSON" ]]; then
+        INBOUNDS_JSON="$inbound"
+    else
+        INBOUNDS_JSON="${INBOUNDS_JSON},${inbound}"
+    fi
     
     LINK="hysteria2://${HY2_PASSWORD}@${SERVER_IP}:${PORT}?insecure=1&sni=itunes.apple.com#${AUTHOR_BLOG}"
     PROTO="Hysteria2"
@@ -500,7 +598,6 @@ setup_socks5() {
     else
         INBOUNDS_JSON="${INBOUNDS_JSON},${inbound}"
     fi
-    INBOUND_JSON="$inbound"
     PROTO="SOCKS5"
     local line="[SOCKS5] ${SERVER_IP}:${PORT}\\n${LINK}\\n"
     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\\n"
@@ -561,7 +658,6 @@ setup_shadowtls() {
     else
         INBOUNDS_JSON="${INBOUNDS_JSON},${inbound}"
     fi
-    INBOUND_JSON="$inbound"
     PROTO="ShadowTLS v3"
     local line="[ShadowTLS v3] ${SERVER_IP}:${PORT}\\n${LINK}\\n"
     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\\n"
@@ -605,7 +701,6 @@ setup_https() {
     else
         INBOUNDS_JSON="${INBOUNDS_JSON},${inbound}"
     fi
-    INBOUND_JSON="$inbound"
     PROTO="HTTPS"
     EXTRA_INFO="UUID: ${UUID}\n证书: 自签证书(itunes.apple.com)"
     local line="[HTTPS] ${SERVER_IP}:${PORT}\\n${LINK}\\n"
@@ -655,7 +750,6 @@ setup_anytls() {
     else
         INBOUNDS_JSON="${INBOUNDS_JSON},${inbound}"
     fi
-    INBOUND_JSON="$inbound"
     PROTO="AnyTLS"
     
     EXTRA_INFO="密码: ${ANYTLS_PASSWORD}\n证书: 自签证书(itunes.apple.com)\n证书指纹(SHA256): ${CERT_SHA256}\n\n✨ 支持的客户端:\n  • Shadowrocket / V2rayN - 直接导入链接"
@@ -1081,6 +1175,9 @@ generate_config() {
 EOFCONFIG
     
     print_success "配置文件生成完成"
+    
+    # 生成配置后，重新生成链接并保存
+    regenerate_links_from_config
 }
 
 start_svc() {
@@ -1246,10 +1343,16 @@ config_and_view_menu() {
         case $cv_choice in
             1)
                 if [[ -z "$INBOUNDS_JSON" ]]; then
-                    print_error "尚未添加任何节点，请先添加节点"
-                else
-                    generate_config && start_svc && show_result
+                    # 尝试从配置文件加载
+                    if load_config_to_vars; then
+                        print_success "已从配置文件加载配置"
+                    else
+                        print_error "尚未添加任何节点，请先添加节点"
+                        read -p "按回车返回..." _
+                        continue
+                    fi
                 fi
+                generate_config && start_svc && show_result
                 ;;
             2)
                 # 确保链接是最新的
@@ -1412,10 +1515,17 @@ main() {
     get_ip
     setup_sb_shortcut
     
+    # 尝试从配置文件加载变量
+    if load_config_to_vars; then
+        print_success "从配置文件加载配置成功"
+    else
+        print_warning "无法从配置文件加载配置，或配置文件不存在"
+    fi
+    
     # 加载已保存的链接
     load_links_from_files
     
-    # 如果配置文件存在但链接为空，尝试重新生成
+    # 如果配置文件存在但链接为空，尝试重新生成链接
     if [[ -f "${CONFIG_FILE}" ]] && [[ -z "${ALL_LINKS_TEXT}" ]]; then
         print_info "检测到配置文件存在，尝试重新生成链接..."
         regenerate_links_from_config
