@@ -61,7 +61,7 @@ SOCKS_USER=""
 SOCKS_PASS=""
 
 # 自签证书域名变量
-SELF_SIGNED_DOMAIN="time.is"
+SELF_SIGNED_DOMAIN="itunes.apple.com"
 
 print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 print_success() { echo -e "${GREEN}[✓]${NC} $1"; }
@@ -320,7 +320,7 @@ load_inbounds_from_config() {
     
     # 加载中转配置
     if jq -e '.outbounds[] | select(.tag == "relay")' "${CONFIG_FILE}" >/dev/null 2>&1; then
-        RELAY_JSON=$(jq -c '.outbounds[] | select(.tag == "relay')' "${CONFIG_FILE}")
+        RELAY_JSON=$(jq -c '.outbounds[] | select(.tag == "relay")' "${CONFIG_FILE}")
         OUTBOUND_TAG="relay"
         
         # 尝试获取路由规则，确定哪些inbound走中转
