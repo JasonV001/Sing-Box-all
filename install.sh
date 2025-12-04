@@ -1306,22 +1306,25 @@ show_main_menu() {
 
     local outbound_desc
     if [[ "$OUTBOUND_TAG" == "relay" ]]; then
-        local relay_proto=""
-        local relay_port=""
+        # 查找所有走中转的节点
+        local relay_nodes=()
         if [[ ${#INBOUND_RELAY_FLAGS[@]} -gt 0 ]]; then
             for i in "${!INBOUND_RELAY_FLAGS[@]}"; do
                 if [[ "${INBOUND_RELAY_FLAGS[$i]}" == "1" ]]; then
-                    relay_proto="${INBOUND_PROTOS[$i]}"
-                    relay_port="${INBOUND_PORTS[$i]}"
-                    break
+                    relay_nodes+=("${INBOUND_PROTOS[$i]}:${INBOUND_PORTS[$i]}")
                 fi
             done
         fi
 
-        if [[ -n "$relay_proto" && -n "$relay_port" ]]; then
-            outbound_desc="中转 (${relay_proto}:${relay_port})"
-        else
+        if [[ ${#relay_nodes[@]} -gt 0 ]]; then
+            # 如果有走中转的节点，显示协议和端口
             outbound_desc="中转"
+            for node in "${relay_nodes[@]}"; do
+                outbound_desc="${outbound_desc} ${node}"
+            done
+        else
+            # 如果没有节点走中转，但仍然配置了中转，显示"中转(无节点)"
+            outbound_desc="中转(无节点)"
         fi
     else
         outbound_desc="直连"
