@@ -334,7 +334,7 @@ load_inbounds_from_config() {
     return 0
 }
 
-# 从配置文件重新生成链接（保险方案）- 已修复
+# 从配置文件重新生成链接（保险方案）
 regenerate_links_from_config() {
     print_info "正在从配置文件重新生成链接..."
     
@@ -488,8 +488,9 @@ regenerate_links_from_config() {
                         cert_fp=$(openssl x509 -fingerprint -noout -sha256 -in "${CERT_DIR}/cert.pem" 2>/dev/null | awk -F '=' '{print $NF}')
                     fi
                     
+                    # 修正：移除 "V2rayN/NekoBox: " 前缀，保持格式一致
                     local link_v2rayn="anytls://${password}@${SERVER_IP}:${port}?security=tls&fp=firefox&insecure=1&type=tcp#${AUTHOR_BLOG}"
-                    local line="[AnyTLS] ${SERVER_IP}:${port}\nV2rayN/NekoBox: ${link_v2rayn}\n"
+                    local line="[AnyTLS] ${SERVER_IP}:${port}\n${link_v2rayn}\n"
                     
                     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
                     ANYTLS_LINKS="${ANYTLS_LINKS}${line}\n"
@@ -1008,7 +1009,7 @@ setup_anytls() {
     PROTO="AnyTLS"
     
     EXTRA_INFO="密码: ${ANYTLS_PASSWORD}\n证书: 自签证书(itunes.apple.com)\n证书指纹(SHA256): ${CERT_SHA256}"
-    local line="[AnyTLS] ${SERVER_IP}:${PORT}\\n${LINK}\\n"
+    local line="[AnyTLS] ${SERVER_IP}:${PORT}\\n${LINK}\\n"  # 修正：移除额外前缀
     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\\n"
     ANYTLS_LINKS="${ANYTLS_LINKS}${line}\\n"
     local tag="anytls-in-${PORT}"
@@ -1640,20 +1641,6 @@ show_result() {
             echo -e "    请使用 NekoBox 或系统代理设置"
         fi
     fi
-    
-    echo -e "${CYAN}───────────────────────────────────────────────────────${NC}"
-    echo ""
-    echo -e "${YELLOW}📱 使用方法:${NC}"
-    echo -e "  1. 复制上面的链接"
-    echo -e "  2. 打开 V2rayN 或 NekoBox 客户端"
-    echo -e "  3. 从剪贴板导入配置"
-    echo ""
-    echo -e "${YELLOW}⚙️  服务管理:${NC}"
-    echo -e "  查看状态: ${CYAN}systemctl status sing-box${NC}"
-    echo -e "  查看日志: ${CYAN}journalctl -u sing-box -f${NC}"
-    echo -e "  重启服务: ${CYAN}systemctl restart sing-box${NC}"
-    echo -e "  停止服务: ${CYAN}systemctl stop sing-box${NC}"
-    echo ""
 }
 
 config_and_view_menu() {
