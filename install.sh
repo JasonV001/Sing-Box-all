@@ -759,7 +759,7 @@ read_port_with_check() {
 setup_reality() {
     echo ""
     read_port_with_check 443
-    read -p "伪装域名 [itunes.apple.com]: " SNI
+    read -p "伪装域名 [${SNI:-itunes.apple.com}]: " SNI
     SNI=${SNI:-itunes.apple.com}
     
     print_info "生成配置文件..."
@@ -905,7 +905,7 @@ setup_socks5() {
 setup_shadowtls() {
     echo ""
     read_port_with_check 443
-    read -p "伪装域名 [www.bing.com]: " SNI
+    read -p "伪装域名 [${SNI:-www.bing.com}]: " SNI
     SNI=${SNI:-www.bing.com}
     
     print_info "生成配置文件..."
@@ -1036,7 +1036,7 @@ setup_anytls() {
     fi
     PROTO="AnyTLS"
     
-    EXTRA_INFO="密码: ${ANYTLS_PASSWORD}\n证书: 自签证书(${SELF_SIGNED_DOMAIN})\n指纹: chrome"
+    EXTRA_INFO="密码: ${ANYTLS_PASSWORD}\n自签证书: ${SELF_SIGNED_DOMAIN}\n指纹: chrome"
     local line="[AnyTLS] ${SERVER_IP}:${PORT}\\n${LINK}\\n"
     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\\n"
     ANYTLS_LINKS="${ANYTLS_LINKS}${line}\\n"
