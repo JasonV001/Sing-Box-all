@@ -789,7 +789,7 @@ setup_reality() {
     fi
     
     # V2rayN/NekoBox 格式链接
-    LINK="vless://${UUID}@${SERVER_IP}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI}&fp=chrome&pbk=${REALITY_PUBLIC}&sid=${SHORT_ID}&type=tcp#${AUTHOR_BLOG}"
+    LINK="vless://${UUID}@${SERVER_IP}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI}&fp=chrome&pbk=${REALITY_PUBLIC}&sid=${SHORT_ID}&type=tcp#${PROTO}-${SERVER_IP}"
     
     PROTO="Reality"
     EXTRA_INFO="UUID: ${UUID}\nPublic Key: ${REALITY_PUBLIC}\nShort ID: ${SHORT_ID}\nSNI: ${SNI}"
@@ -835,7 +835,7 @@ setup_hysteria2() {
     fi
     
     # Hysteria2 链接格式（NekoBox支持）
-    LINK="hysteria2://${HY2_PASSWORD}@${SERVER_IP}:${PORT}?insecure=1&sni=${SELF_SIGNED_DOMAIN}#${AUTHOR_BLOG}"
+    LINK="hysteria2://${HY2_PASSWORD}@${SERVER_IP}:${PORT}?insecure=1&sni=${SELF_SIGNED_DOMAIN}#${PROTO}-${SERVER_IP}"
     PROTO="Hysteria2"
     EXTRA_INFO="密码: ${HY2_PASSWORD}\n证书: 自签证书(${SELF_SIGNED_DOMAIN})\n指纹: chrome"
     local line="[Hysteria2] ${SERVER_IP}:${PORT}\\n${LINK}\\n"
@@ -866,7 +866,7 @@ setup_socks5() {
   "listen_port": '${PORT}',
   "users": [{"username": "'${SOCKS_USER}'", "password": "'${SOCKS_PASS}'"}]
 }'
-        LINK="socks5://${SOCKS_USER}:${SOCKS_PASS}@${SERVER_IP}:${PORT}#${AUTHOR_BLOG}"
+        LINK="socks5://${SOCKS_USER}:${SOCKS_PASS}@${SERVER_IP}:${PORT}#${PROTO}-${SERVER_IP}"
         EXTRA_INFO="用户名: ${SOCKS_USER}\n密码: ${SOCKS_PASS}"
     else
         local inbound='{
@@ -875,7 +875,7 @@ setup_socks5() {
   "listen": "::",
   "listen_port": '${PORT}'
 }'
-        LINK="socks5://${SERVER_IP}:${PORT}#${AUTHOR_BLOG}"
+        LINK="socks5://${SERVER_IP}:${PORT}#${PROTO}-${SERVER_IP}"
         EXTRA_INFO="无认证"
     fi
     
@@ -938,7 +938,7 @@ setup_shadowtls() {
     local plugin_base64=$(echo -n "$plugin_json" | base64 -w0)
     
     # ShadowTLS 链接格式（NekoBox支持）
-    LINK="ss://${ss_userinfo}@${SERVER_IP}:${PORT}?shadow-tls=${plugin_base64}#${AUTHOR_BLOG}"
+    LINK="ss://${ss_userinfo}@${SERVER_IP}:${PORT}?shadow-tls=${plugin_base64}#${PROTO}-${SERVER_IP}"
     
     if [[ -z "$INBOUNDS_JSON" ]]; then
         INBOUNDS_JSON="$inbound"
@@ -983,7 +983,7 @@ setup_https() {
 }'
     
     # V2rayN/NekoBox 格式链接
-    LINK="vless://${UUID}@${SERVER_IP}:${PORT}?encryption=none&security=tls&sni=${SELF_SIGNED_DOMAIN}&type=tcp&allowInsecure=1#${AUTHOR_BLOG}"
+    LINK="vless://${UUID}@${SERVER_IP}:${PORT}?encryption=none&security=tls&sni=${SELF_SIGNED_DOMAIN}&type=tcp&allowInsecure=1#${PROTO}-${SERVER_IP}"
     if [[ -z "$INBOUNDS_JSON" ]]; then
         INBOUNDS_JSON="$inbound"
     else
@@ -1027,7 +1027,7 @@ setup_anytls() {
 }'
     
     # V2rayN/NekoBox 格式链接
-    LINK="anytls://${ANYTLS_PASSWORD}@${SERVER_IP}:${PORT}?security=tls&fp=chrome&insecure=1&type=tcp#${AUTHOR_BLOG}"
+    LINK="anytls://${ANYTLS_PASSWORD}@${SERVER_IP}:${PORT}?security=tls&fp=chrome&insecure=1&type=tcp#${PROTO}-${SERVER_IP}"
     
     if [[ -z "$INBOUNDS_JSON" ]]; then
         INBOUNDS_JSON="$inbound"
@@ -1681,18 +1681,6 @@ show_result() {
     fi
     
     echo -e "${CYAN}───────────────────────────────────────────────────────${NC}"
-    echo ""
-    echo -e "${YELLOW}📱 使用方法:${NC}"
-    echo -e "  1. 复制上面的链接"
-    echo -e "  2. 打开 V2rayN 或 NekoBox 客户端"
-    echo -e "  3. 从剪贴板导入配置"
-    echo ""
-    echo -e "${YELLOW}⚙️  服务管理:${NC}"
-    echo -e "  查看状态: ${CYAN}systemctl status sing-box${NC}"
-    echo -e "  查看日志: ${CYAN}journalctl -u sing-box -f${NC}"
-    echo -e "  重启服务: ${CYAN}systemctl restart sing-box${NC}"
-    echo -e "  停止服务: ${CYAN}systemctl stop sing-box${NC}"
-    echo ""
 }
 
 config_and_view_menu() {
