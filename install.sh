@@ -67,7 +67,6 @@ print_error() { echo -e "${RED}[✗]${NC} $1"; }
 
 show_banner() {
     clear
-    echo -e "${CYAN}${NC}"
     echo ""
 }
 
@@ -335,7 +334,7 @@ load_inbounds_from_config() {
     return 0
 }
 
-# 从配置文件重新生成链接（保险方案）
+# 从配置文件重新生成链接（保险方案）- 已修复
 regenerate_links_from_config() {
     print_info "正在从配置文件重新生成链接..."
     
@@ -347,6 +346,12 @@ regenerate_links_from_config() {
     SHADOWTLS_LINKS=""
     HTTPS_LINKS=""
     ANYTLS_LINKS=""
+    
+    # 加载密钥文件
+    if [[ -f "${KEY_FILE}" ]]; then
+        print_info "从密钥文件加载密钥..."
+        . "${KEY_FILE}"
+    fi
     
     if [[ ! -f "${CONFIG_FILE}" ]]; then
         print_warning "配置文件不存在，无法重新生成链接"
@@ -398,6 +403,21 @@ regenerate_links_from_config() {
                         local pbk=$(echo "$inbound" | jq -r '.tls.reality.public_key // ""' 2>/dev/null)
                         local sid=$(echo "$inbound" | jq -r '.tls.reality.short_id[0] // ""' 2>/dev/null)
                         
+                        # 如果没有从配置文件获取到UUID，使用密钥文件中的UUID
+                        if [[ -z "$uuid" && -n "${UUID}" ]]; then
+                            uuid="${UUID}"
+                        fi
+                        
+                        # 如果没有从配置文件获取到公钥，使用密钥文件中的公钥
+                        if [[ -z "$pbk" && -n "${REALITY_PUBLIC}" ]]; then
+                            pbk="${REALITY_PUBLIC}"
+                        fi
+                        
+                        # 如果没有从配置文件获取到短ID，使用密钥文件中的短ID
+                        if [[ -z "$sid" && -n "${SHORT_ID}" ]]; then
+                            sid="${SHORT_ID}"
+                        fi
+                        
                         if [[ -n "$uuid" && -n "$pbk" ]]; then
                             local link="vless://${uuid}@${SERVER_IP}:${port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${sni}&fp=chrome&pbk=${pbk}&sid=${sid}&type=tcp#${AUTHOR_BLOG}"
                             local line="[Reality] ${SERVER_IP}:${port}\n${link}\n"
@@ -407,6 +427,10 @@ regenerate_links_from_config() {
                     else
                         # HTTPS
                         local uuid=$(echo "$inbound" | jq -r '.users[0].uuid // ""' 2>/dev/null)
+                        if [[ -z "$uuid" && -n "${UUID}" ]]; then
+                            uuid="${UUID}"
+                        fi
+                        
                         if [[ -n "$uuid" ]]; then
                             local link="vless://${uuid}@${SERVER_IP}:${port}?encryption=none&security=tls&sni=itunes.apple.com&type=tcp&allowInsecure=1#${AUTHOR_BLOG}"
                             local line="[HTTPS] ${SERVER_IP}:${port}\n${link}\n"
@@ -490,6 +514,174 @@ cleanup_links() {
     HTTPS_LINKS=""
     ANYTLS_LINKS=""
     print_success "链接文件已清理"
+}
+
+# 删除单个节点
+delete_single_node() {
+    if [[ ${#INBOUND_TAGS[@]} -eq 0 ]]; then
+        print_warning "当前没有可删除的节点"
+        return 1
+    fi
+    
+    echo ""
+    echo -e "${CYAN}当前节点列表:${NC}"
+    for i in "${!INBOUND_TAGS[@]}"; do
+        idx=$((i+1))
+        echo -e "  ${GREEN}[${idx}]${NC} 协议: ${INBOUND_PROTOS[$i]}, 端口: ${INBOUND_PORTS[$i]}, TAG: ${INBOUND_TAGS[$i]}"
+    done
+    echo ""
+    echo -e "${RED}警告: 删除节点后无法恢复！${NC}"
+    read -p "请输入要删除的节点序号 (输入 0 取消): " node_idx
+    
+    if [[ "$node_idx" == "0" ]]; then
+        print_info "取消删除操作"
+        return 0
+    fi
+    
+    if ! [[ "$node_idx" =~ ^[0-9]+$ ]] || (( node_idx < 1 || node_idx > ${#INBOUND_TAGS[@]} )); then
+        print_error "序号无效"
+        return 1
+    fi
+    
+    local index=$((node_idx-1))
+    local tag="${INBOUND_TAGS[$index]}"
+    local port="${INBOUND_PORTS[$index]}"
+    local proto="${INBOUND_PROTOS[$index]}"
+    
+    echo ""
+    echo -e "${YELLOW}确认删除以下节点:${NC}"
+    echo -e "  协议: ${proto}"
+    echo -e "  端口: ${port}"
+    echo -e "  TAG: ${tag}"
+    echo ""
+    
+    read -p "确认删除? (y/N): " confirm_delete
+    confirm_delete=${confirm_delete:-N}
+    
+    if [[ ! "$confirm_delete" =~ ^[Yy]$ ]]; then
+        print_info "取消删除操作"
+        return 0
+    fi
+    
+    # 从 INBOUNDS_JSON 中删除对应的节点
+    local new_inbounds=""
+    local count=0
+    
+    # 使用 jq 重新构建 inbounds 数组
+    if command -v jq &>/dev/null && [[ -f "${CONFIG_FILE}" ]]; then
+        # 使用 jq 过滤掉要删除的节点
+        local inbounds_count=$(jq '.inbounds | length' "${CONFIG_FILE}")
+        
+        for ((i=0; i<inbounds_count; i++)); do
+            local current_tag=$(jq -r ".inbounds[${i}].tag // \"\"" "${CONFIG_FILE}")
+            
+            if [[ "$current_tag" != "$tag" ]]; then
+                local inbound=$(jq -c ".inbounds[${i}]" "${CONFIG_FILE}")
+                if [[ -z "$new_inbounds" ]]; then
+                    new_inbounds="$inbound"
+                else
+                    new_inbounds="${new_inbounds},${inbound}"
+                fi
+                count=$((count+1))
+            fi
+        done
+        
+        INBOUNDS_JSON="$new_inbounds"
+        
+        # 从数组中删除
+        unset INBOUND_TAGS[$index]
+        unset INBOUND_PORTS[$index]
+        unset INBOUND_PROTOS[$index]
+        unset INBOUND_RELAY_FLAGS[$index]
+        
+        # 重建数组（移除空元素）
+        INBOUND_TAGS=("${INBOUND_TAGS[@]}")
+        INBOUND_PORTS=("${INBOUND_PORTS[@]}")
+        INBOUND_PROTOS=("${INBOUND_PROTOS[@]}")
+        INBOUND_RELAY_FLAGS=("${INBOUND_RELAY_FLAGS[@]}")
+        
+        # 重新生成配置
+        generate_config
+        start_svc
+        
+        # 重新生成链接
+        regenerate_links_from_config
+        
+        print_success "节点已删除: ${proto}:${port}"
+    else
+        print_error "无法解析配置文件"
+        return 1
+    fi
+}
+
+# 删除全部节点
+delete_all_nodes() {
+    echo ""
+    echo -e "${RED}⚠️  警告: 此操作将删除所有节点配置！${NC}"
+    echo -e "${YELLOW}当前共有 ${#INBOUND_TAGS[@]} 个节点${NC}"
+    echo ""
+    echo -e "删除后:"
+    echo -e "  1. 所有节点配置将被清空"
+    echo -e "  2. 配置文件将只保留基础结构"
+    echo -e "  3. 需要重新添加节点"
+    echo ""
+    
+    read -p "确认删除所有节点? (输入 'YES' 确认): " confirm_delete
+    
+    if [[ "$confirm_delete" != "YES" ]]; then
+        print_info "取消删除操作"
+        return 0
+    fi
+    
+    # 清空所有节点相关变量
+    INBOUNDS_JSON=""
+    INBOUND_TAGS=()
+    INBOUND_PORTS=()
+    INBOUND_PROTOS=()
+    INBOUND_RELAY_FLAGS=()
+    
+    # 创建空的配置文件
+    cat > ${CONFIG_FILE} << EOFCONFIG
+{
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "inbounds": [],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ],
+  "route": {
+    "final": "direct"
+  }
+}
+EOFCONFIG
+    
+    # 停止服务
+    print_info "停止 sing-box 服务..."
+    systemctl stop sing-box 2>/dev/null || true
+    
+    # 清理链接文件
+    cleanup_links
+    
+    print_success "所有节点已删除，配置文件已重置"
+    
+    # 询问是否重新启动服务
+    read -p "是否启动空配置的 sing-box 服务? (y/N): " restart_service
+    restart_service=${restart_service:-N}
+    
+    if [[ "$restart_service" =~ ^[Yy]$ ]]; then
+        systemctl start sing-box
+        sleep 2
+        if systemctl is-active --quiet sing-box; then
+            print_success "服务已启动 (空配置)"
+        else
+            print_error "服务启动失败"
+        fi
+    fi
 }
 
 get_ip() {
@@ -1489,10 +1681,14 @@ config_and_view_menu() {
         echo ""
         echo -e "  ${GREEN}[9]${NC} 重新从配置文件生成链接"
         echo ""
+        echo -e "  ${GREEN}[10]${NC} 删除单个节点"
+        echo ""
+        echo -e "  ${GREEN}[11]${NC} 删除全部节点"
+        echo ""
         echo -e "  ${GREEN}[0]${NC} 返回主菜单"
         echo ""
 
-        read -p "请选择 [0-9]: " cv_choice
+        read -p "请选择 [0-11]: " cv_choice
         case $cv_choice in
             1)
                 # 重新从配置文件加载配置
@@ -1627,6 +1823,14 @@ config_and_view_menu() {
                 regenerate_links_from_config
                 read -p "按回车返回..." _
                 ;;
+            10)
+                delete_single_node
+                read -p "按回车返回..." _
+                ;;
+            11)
+                delete_all_nodes
+                read -p "按回车返回..." _
+                ;;
             0)
                 break
                 ;;
@@ -1661,7 +1865,7 @@ main() {
     
     install_singbox
     mkdir -p /etc/sing-box
-    gen_keys  # 这个函数会加载或生成密钥
+    gen_keys
     get_ip
     setup_sb_shortcut
     
@@ -1683,3 +1887,5 @@ main() {
     
     main_menu
 }
+
+main
