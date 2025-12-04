@@ -1096,6 +1096,8 @@ config_and_view_menu() {
                 else
                     echo -e "$ALL_LINKS_TEXT"
                 fi
+                echo ""
+                read -p "按回车返回..." _
                 ;;
             3)
                 clear
@@ -1106,6 +1108,8 @@ config_and_view_menu() {
                 else
                     echo -e "$REALITY_LINKS"
                 fi
+                echo ""
+                read -p "按回车返回..." _
                 ;;
             4)
                 clear
@@ -1116,6 +1120,8 @@ config_and_view_menu() {
                 else
                     echo -e "$HYSTERIA2_LINKS"
                 fi
+                echo ""
+                read -p "按回车返回..." _
                 ;;
             5)
                 clear
@@ -1126,6 +1132,8 @@ config_and_view_menu() {
                 else
                     echo -e "$SOCKS5_LINKS"
                 fi
+                echo ""
+                read -p "按回车返回..." _
                 ;;
             6)
                 clear
@@ -1136,6 +1144,8 @@ config_and_view_menu() {
                 else
                     echo -e "$SHADOWTLS_LINKS"
                 fi
+                echo ""
+                read -p "按回车返回..." _
                 ;;
             7)
                 clear
@@ -1146,6 +1156,8 @@ config_and_view_menu() {
                 else
                     echo -e "$HTTPS_LINKS"
                 fi
+                echo ""
+                read -p "按回车返回..." _
                 ;;
             8)
                 clear
@@ -1156,6 +1168,8 @@ config_and_view_menu() {
                 else
                     echo -e "$ANYTLS_LINKS"
                 fi
+                echo ""
+                read -p "按回车返回..." _
                 ;;
             0)
                 break
@@ -1164,8 +1178,6 @@ config_and_view_menu() {
                 print_error "无效选项"
                 ;;
         esac
-        echo ""
-        read -p "按回车返回主菜单..." _
     done
 }
 
