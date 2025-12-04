@@ -15,8 +15,20 @@ CONFIG_FILE="/etc/sing-box/config.json"
 INSTALL_DIR="/usr/local/bin"
 CERT_DIR="/etc/sing-box/certs"
 
+# 链接保存目录
+LINK_DIR="/etc/sing-box/links"
+ALL_LINKS_FILE="${LINK_DIR}/all.txt"
+REALITY_LINKS_FILE="${LINK_DIR}/reality.txt"
+HYSTERIA2_LINKS_FILE="${LINK_DIR}/hysteria2.txt"
+SOCKS5_LINKS_FILE="${LINK_DIR}/socks5.txt"
+SHADOWTLS_LINKS_FILE="${LINK_DIR}/shadowtls.txt"
+HTTPS_LINKS_FILE="${LINK_DIR}/https.txt"
+ANYTLS_LINKS_FILE="${LINK_DIR}/anytls.txt"
+
+# 密钥保存文件
+KEY_FILE="/etc/sing-box/keys.txt"
+
 SCRIPT_PATH=$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")
-STATE_FILE="/etc/sing-box/state.json"
 INBOUNDS_JSON=""
 OUTBOUND_TAG="direct"
 ALL_LINKS_TEXT=""
@@ -34,70 +46,19 @@ INBOUND_PORTS=()
 INBOUND_PROTOS=()
 INBOUND_RELAY_FLAGS=()
 
-save_state() {
-    print_info "保存节点配置..."
-    
-    local tags_json=$(printf '%s\n' "${INBOUND_TAGS[@]}" | jq -R . | jq -s .)
-    local ports_json=$(printf '%s\n' "${INBOUND_PORTS[@]}" | jq -R . | jq -s .)
-    local protos_json=$(printf '%s\n' "${INBOUND_PROTOS[@]}" | jq -R . | jq -s .)
-    local relay_flags_json=$(printf '%s\n' "${INBOUND_RELAY_FLAGS[@]}" | jq -R . | jq -s .)
+RELAY_JSON=""
 
-    jq -n \
-      --arg all_links "$ALL_LINKS_TEXT" \
-      --arg reality_links "$REALITY_LINKS" \
-      --arg hysteria2_links "$HYSTERIA2_LINKS" \
-      --arg socks5_links "$SOCKS5_LINKS" \
-      --arg shadowtls_links "$SHADOWTLS_LINKS" \
-      --arg https_links "$HTTPS_LINKS" \
-      --arg anytls_links "$ANYTLS_LINKS" \
-      --arg inbounds_json "$INBOUNDS_JSON" \
-      --argjson tags "$tags_json" \
-      --argjson ports "$ports_json" \
-      --argjson protos "$protos_json" \
-      --argjson relay_flags "$relay_flags_json" \
-      '{
-        "all_links_text": $all_links,
-        "reality_links": $reality_links,
-        "hysteria2_links": $hysteria2_links,
-        "socks5_links": $socks5_links,
-        "shadowtls_links": $shadowtls_links,
-        "https_links": $https_links,
-        "anytls_links": $anytls_links,
-        "inbounds_json": $inbounds_json,
-        "inbound_tags": $tags,
-        "inbound_ports": $ports,
-        "inbound_protos": $protos,
-        "inbound_relay_flags": $relay_flags
-      }' > "$STATE_FILE"
-    print_success "配置已保存到 ${STATE_FILE}"
-}
-
-load_state() {
-    if [[ -f "$STATE_FILE" ]]; then
-        print_info "加载已保存的节点配置..."
-        local data
-        data=$(cat "$STATE_FILE")
-        
-        ALL_LINKS_TEXT=$(echo "$data" | jq -r '.all_links_text // ""')
-        REALITY_LINKS=$(echo "$data" | jq -r '.reality_links // ""')
-        HYSTERIA2_LINKS=$(echo "$data" | jq -r '.hysteria2_links // ""')
-        SOCKS5_LINKS=$(echo "$data" | jq -r '.socks5_links // ""')
-        SHADOWTLS_LINKS=$(echo "$data" | jq -r '.shadowtls_links // ""')
-        HTTPS_LINKS=$(echo "$data" | jq -r '.https_links // ""')
-        ANYTLS_LINKS=$(echo "$data" | jq -r '.anytls_links // ""')
-        INBOUNDS_JSON=$(echo "$data" | jq -r '.inbounds_json // ""')
-
-        mapfile -t INBOUND_TAGS < <(echo "$data" | jq -r '.inbound_tags[] // ""')
-        mapfile -t INBOUND_PORTS < <(echo "$data" | jq -r '.inbound_ports[] // ""')
-        mapfile -t INBOUND_PROTOS < <(echo "$data" | jq -r '.inbound_protos[] // ""')
-        mapfile -t INBOUND_RELAY_FLAGS < <(echo "$data" | jq -r '.inbound_relay_flags[] // ""')
-        
-        print_success "配置加载完成"
-    else
-        print_info "未找到旧配置，初始化新配置..."
-    fi
-}
-
+# 关键密钥变量
+UUID=""
+REALITY_PRIVATE=""
+REALITY_PUBLIC=""
+SHORT_ID=""
+HY2_PASSWORD=""
+SS_PASSWORD=""
+SHADOWTLS_PASSWORD=""
+ANYTLS_PASSWORD=""
+SOCKS_USER=""
+SOCKS_PASS=""
 
 print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 print_success() { echo -e "${GREEN}[✓]${NC} $1"; }
@@ -178,6 +139,16 @@ gen_cert() {
 
 gen_keys() {
     print_info "生成密钥和 UUID..."
+    
+    # 如果密钥文件已存在，则加载它
+    if [[ -f "${KEY_FILE}" ]]; then
+        print_info "从文件加载已保存的密钥..."
+        . "${KEY_FILE}"
+        print_success "密钥加载完成"
+        return 0
+    fi
+    
+    # 生成新的密钥
     KEYS=$(${INSTALL_DIR}/sing-box generate reality-keypair 2>/dev/null)
     REALITY_PRIVATE=$(echo "$KEYS" | grep "PrivateKey" | awk '{print $2}')
     REALITY_PUBLIC=$(echo "$KEYS" | grep "PublicKey" | awk '{print $2}')
@@ -189,7 +160,337 @@ gen_keys() {
     ANYTLS_PASSWORD=$(openssl rand -base64 16)
     SOCKS_USER="user_$(openssl rand -hex 4)"
     SOCKS_PASS=$(openssl rand -base64 12)
+    
+    # 保存密钥到文件
+    save_keys_to_file
+    
     print_success "密钥生成完成"
+}
+
+# 保存密钥到文件
+save_keys_to_file() {
+    mkdir -p "$(dirname "${KEY_FILE}")"
+    
+    cat > "${KEY_FILE}" << EOF
+# Sing-box 密钥文件
+UUID="${UUID}"
+REALITY_PRIVATE="${REALITY_PRIVATE}"
+REALITY_PUBLIC="${REALITY_PUBLIC}"
+SHORT_ID="${SHORT_ID}"
+HY2_PASSWORD="${HY2_PASSWORD}"
+SS_PASSWORD="${SS_PASSWORD}"
+SHADOWTLS_PASSWORD="${SHADOWTLS_PASSWORD}"
+ANYTLS_PASSWORD="${ANYTLS_PASSWORD}"
+SOCKS_USER="${SOCKS_USER}"
+SOCKS_PASS="${SOCKS_PASS}"
+EOF
+    
+    chmod 600 "${KEY_FILE}"
+    print_success "密钥已保存到 ${KEY_FILE}"
+}
+
+# 保存链接到文件
+save_links_to_files() {
+    mkdir -p "${LINK_DIR}"
+    
+    # 保存到文件（不带转义符，实际换行）
+    echo -en "${ALL_LINKS_TEXT}" > "${ALL_LINKS_FILE}"
+    echo -en "${REALITY_LINKS}" > "${REALITY_LINKS_FILE}"
+    echo -en "${HYSTERIA2_LINKS}" > "${HYSTERIA2_LINKS_FILE}"
+    echo -en "${SOCKS5_LINKS}" > "${SOCKS5_LINKS_FILE}"
+    echo -en "${SHADOWTLS_LINKS}" > "${SHADOWTLS_LINKS_FILE}"
+    echo -en "${HTTPS_LINKS}" > "${HTTPS_LINKS_FILE}"
+    echo -en "${ANYTLS_LINKS}" > "${ANYTLS_LINKS_FILE}"
+    
+    print_success "链接已保存到 ${LINK_DIR}"
+}
+
+# 从文件加载链接
+load_links_from_files() {
+    mkdir -p "${LINK_DIR}"
+    
+    if [[ -f "${ALL_LINKS_FILE}" ]]; then
+        ALL_LINKS_TEXT=$(cat "${ALL_LINKS_FILE}")
+    fi
+    if [[ -f "${REALITY_LINKS_FILE}" ]]; then
+        REALITY_LINKS=$(cat "${REALITY_LINKS_FILE}")
+    fi
+    if [[ -f "${HYSTERIA2_LINKS_FILE}" ]]; then
+        HYSTERIA2_LINKS=$(cat "${HYSTERIA2_LINKS_FILE}")
+    fi
+    if [[ -f "${SOCKS5_LINKS_FILE}" ]]; then
+        SOCKS5_LINKS=$(cat "${SOCKS5_LINKS_FILE}")
+    fi
+    if [[ -f "${SHADOWTLS_LINKS_FILE}" ]]; then
+        SHADOWTLS_LINKS=$(cat "${SHADOWTLS_LINKS_FILE}")
+    fi
+    if [[ -f "${HTTPS_LINKS_FILE}" ]]; then
+        HTTPS_LINKS=$(cat "${HTTPS_LINKS_FILE}")
+    fi
+    if [[ -f "${ANYTLS_LINKS_FILE}" ]]; then
+        ANYTLS_LINKS=$(cat "${ANYTLS_LINKS_FILE}")
+    fi
+}
+
+# 从配置文件加载 INBOUNDS_JSON 和节点信息
+load_inbounds_from_config() {
+    print_info "正在从配置文件加载节点配置..."
+    
+    # 清空变量
+    INBOUNDS_JSON=""
+    INBOUND_TAGS=()
+    INBOUND_PORTS=()
+    INBOUND_PROTOS=()
+    INBOUND_RELAY_FLAGS=()
+    
+    if [[ ! -f "${CONFIG_FILE}" ]]; then
+        print_warning "配置文件不存在，无法加载节点配置"
+        return 1
+    fi
+    
+    if ! command -v jq &>/dev/null; then
+        print_warning "jq命令未安装，无法解析配置文件"
+        return 1
+    fi
+    
+    # 获取所有 inbounds
+    local inbounds_count=$(jq '.inbounds | length' "${CONFIG_FILE}" 2>/dev/null || echo "0")
+    
+    if [[ "$inbounds_count" -eq 0 ]]; then
+        print_warning "配置文件中没有找到inbounds"
+        return 1
+    fi
+    
+    print_info "找到 ${inbounds_count} 个 inbound 配置"
+    
+    # 构建 INBOUNDS_JSON
+    local inbound_list=""
+    
+    for ((i=0; i<inbounds_count; i++)); do
+        local inbound=$(jq -c ".inbounds[${i}]" "${CONFIG_FILE}" 2>/dev/null)
+        
+        if [[ -z "$inbound" ]]; then
+            continue
+        fi
+        
+        # 添加到 INBOUNDS_JSON
+        if [[ -z "$inbound_list" ]]; then
+            inbound_list="$inbound"
+        else
+            inbound_list="${inbound_list},${inbound}"
+        fi
+        
+        # 提取信息到数组
+        local tag=$(echo "$inbound" | jq -r '.tag' 2>/dev/null || echo "unknown")
+        local port=$(echo "$inbound" | jq -r '.listen_port' 2>/dev/null || echo "0")
+        local type=$(echo "$inbound" | jq -r '.type' 2>/dev/null || echo "unknown")
+        
+        # 根据 tag 判断协议类型
+        local proto="unknown"
+        if [[ "$tag" == *"vless-in-"* ]]; then
+            proto="Reality"
+        elif [[ "$tag" == *"hy2-in-"* ]]; then
+            proto="Hysteria2"
+        elif [[ "$tag" == *"socks-in"* ]]; then
+            proto="SOCKS5"
+        elif [[ "$tag" == *"shadowtls-in-"* ]]; then
+            proto="ShadowTLS v3"
+        elif [[ "$tag" == *"vless-tls-in-"* ]]; then
+            proto="HTTPS"
+        elif [[ "$tag" == *"anytls-in-"* ]]; then
+            proto="AnyTLS"
+        fi
+        
+        INBOUND_TAGS+=("$tag")
+        INBOUND_PORTS+=("$port")
+        INBOUND_PROTOS+=("$proto")
+        INBOUND_RELAY_FLAGS+=(0)  # 默认直连
+    done
+    
+    INBOUNDS_JSON="$inbound_list"
+    
+    # 加载中转配置
+    if jq -e '.outbounds[] | select(.tag == "relay")' "${CONFIG_FILE}" >/dev/null 2>&1; then
+        RELAY_JSON=$(jq -c '.outbounds[] | select(.tag == "relay")' "${CONFIG_FILE}")
+        OUTBOUND_TAG="relay"
+        
+        # 尝试获取路由规则，确定哪些inbound走中转
+        local rule_inbounds=$(jq -r '.route.rules[0].inbound[]?' "${CONFIG_FILE}" 2>/dev/null)
+        if [[ -n "$rule_inbounds" ]]; then
+            while IFS= read -r inbound_tag; do
+                for idx in "${!INBOUND_TAGS[@]}"; do
+                    if [[ "${INBOUND_TAGS[$idx]}" == "$inbound_tag" ]]; then
+                        INBOUND_RELAY_FLAGS[$idx]=1
+                        break
+                    fi
+                done
+            done <<< "$rule_inbounds"
+        fi
+    else
+        RELAY_JSON=""
+        OUTBOUND_TAG="direct"
+    fi
+    
+    print_success "节点配置加载完成"
+    return 0
+}
+
+# 从配置文件重新生成链接（保险方案）
+regenerate_links_from_config() {
+    print_info "正在从配置文件重新生成链接..."
+    
+    # 清空所有链接变量
+    ALL_LINKS_TEXT=""
+    REALITY_LINKS=""
+    HYSTERIA2_LINKS=""
+    SOCKS5_LINKS=""
+    SHADOWTLS_LINKS=""
+    HTTPS_LINKS=""
+    ANYTLS_LINKS=""
+    
+    if [[ ! -f "${CONFIG_FILE}" ]]; then
+        print_warning "配置文件不存在，无法重新生成链接"
+        return 1
+    fi
+    
+    if ! command -v jq &>/dev/null; then
+        print_warning "jq命令未安装，无法解析配置文件"
+        return 1
+    fi
+    
+    # 获取所有inbounds
+    local inbounds_count=$(jq '.inbounds | length' "${CONFIG_FILE}" 2>/dev/null || echo "0")
+    
+    if [[ "$inbounds_count" -eq 0 ]]; then
+        print_warning "配置文件中没有找到inbounds"
+        return 1
+    fi
+    
+    print_info "从配置文件中找到 ${inbounds_count} 个inbound配置"
+    
+    # 遍历每个inbound
+    for ((i=0; i<inbounds_count; i++)); do
+        local inbound=$(jq -c ".inbounds[${i}]" "${CONFIG_FILE}" 2>/dev/null)
+        
+        if [[ -z "$inbound" ]]; then
+            continue
+        fi
+        
+        local type=$(echo "$inbound" | jq -r '.type' 2>/dev/null)
+        local port=$(echo "$inbound" | jq -r '.listen_port' 2>/dev/null)
+        local tag=$(echo "$inbound" | jq -r '.tag' 2>/dev/null)
+        
+        if [[ -z "$type" || -z "$port" ]]; then
+            continue
+        fi
+        
+        # 根据类型生成链接
+        case "$type" in
+            "vless")
+                # 检查是否是Reality
+                local tls_enabled=$(echo "$inbound" | jq -r '.tls.enabled // false' 2>/dev/null)
+                if [[ "$tls_enabled" == "true" ]]; then
+                    local reality_enabled=$(echo "$inbound" | jq -r '.tls.reality.enabled // false' 2>/dev/null)
+                    if [[ "$reality_enabled" == "true" ]]; then
+                        # Reality
+                        local uuid=$(echo "$inbound" | jq -r '.users[0].uuid // ""' 2>/dev/null)
+                        local sni=$(echo "$inbound" | jq -r '.tls.server_name // "itunes.apple.com"' 2>/dev/null)
+                        local pbk=$(echo "$inbound" | jq -r '.tls.reality.public_key // ""' 2>/dev/null)
+                        local sid=$(echo "$inbound" | jq -r '.tls.reality.short_id[0] // ""' 2>/dev/null)
+                        
+                        if [[ -n "$uuid" && -n "$pbk" ]]; then
+                            local link="vless://${uuid}@${SERVER_IP}:${port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${sni}&fp=chrome&pbk=${pbk}&sid=${sid}&type=tcp#${AUTHOR_BLOG}"
+                            local line="[Reality] ${SERVER_IP}:${port}\n${link}\n"
+                            ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
+                            REALITY_LINKS="${REALITY_LINKS}${line}\n"
+                        fi
+                    else
+                        # HTTPS
+                        local uuid=$(echo "$inbound" | jq -r '.users[0].uuid // ""' 2>/dev/null)
+                        if [[ -n "$uuid" ]]; then
+                            local link="vless://${uuid}@${SERVER_IP}:${port}?encryption=none&security=tls&sni=itunes.apple.com&type=tcp&allowInsecure=1#${AUTHOR_BLOG}"
+                            local line="[HTTPS] ${SERVER_IP}:${port}\n${link}\n"
+                            ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
+                            HTTPS_LINKS="${HTTPS_LINKS}${line}\n"
+                        fi
+                    fi
+                fi
+                ;;
+            "hysteria2")
+                local password=$(echo "$inbound" | jq -r '.users[0].password // ""' 2>/dev/null)
+                if [[ -n "$password" ]]; then
+                    local link="hysteria2://${password}@${SERVER_IP}:${port}?insecure=1&sni=itunes.apple.com#${AUTHOR_BLOG}"
+                    local line="[Hysteria2] ${SERVER_IP}:${port}\n${link}\n"
+                    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
+                    HYSTERIA2_LINKS="${HYSTERIA2_LINKS}${line}\n"
+                fi
+                ;;
+            "socks")
+                local username=$(echo "$inbound" | jq -r '.users[0].username // ""' 2>/dev/null)
+                local password=$(echo "$inbound" | jq -r '.users[0].password // ""' 2>/dev/null)
+                local link=""
+                
+                if [[ -n "$username" && -n "$password" ]]; then
+                    link="socks5://${username}:${password}@${SERVER_IP}:${port}#${AUTHOR_BLOG}"
+                else
+                    link="socks5://${SERVER_IP}:${port}#${AUTHOR_BLOG}"
+                fi
+                
+                if [[ -n "$link" ]]; then
+                    local line="[SOCKS5] ${SERVER_IP}:${port}\n${link}\n"
+                    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
+                    SOCKS5_LINKS="${SOCKS5_LINKS}${line}\n"
+                fi
+                ;;
+            "shadowtls")
+                # ShadowTLS 需要特殊处理
+                local password=$(echo "$inbound" | jq -r '.users[0].password // ""' 2>/dev/null)
+                local sni=$(echo "$inbound" | jq -r '.handshake.server // "www.bing.com"' 2>/dev/null)
+                
+                if [[ -n "$password" ]]; then
+                    # 这里需要查找对应的shadowsocks inbound
+                    # 简化处理，只标记存在
+                    local line="[ShadowTLS v3] ${SERVER_IP}:${port} (需要手动查看配置)\n"
+                    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
+                    SHADOWTLS_LINKS="${SHADOWTLS_LINKS}${line}\n"
+                fi
+                ;;
+            "anytls")
+                local password=$(echo "$inbound" | jq -r '.users[0].password // ""' 2>/dev/null)
+                if [[ -n "$password" ]]; then
+                    # 获取证书指纹
+                    local cert_fp=""
+                    if [[ -f "${CERT_DIR}/cert.pem" ]]; then
+                        cert_fp=$(openssl x509 -fingerprint -noout -sha256 -in "${CERT_DIR}/cert.pem" 2>/dev/null | awk -F '=' '{print $NF}')
+                    fi
+                    
+                    local link_shadowrocket="anytls://${password}@${SERVER_IP}:${port}?udp=1&hpkp=${cert_fp}#${AUTHOR_BLOG}"
+                    local link_v2rayn="anytls://${password}@${SERVER_IP}:${port}?security=tls&fp=firefox&insecure=1&type=tcp#${AUTHOR_BLOG}"
+                    local line="[AnyTLS] ${SERVER_IP}:${port}\nShadowrocket: ${link_shadowrocket}\nV2rayN: ${link_v2rayn}\n"
+                    
+                    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
+                    ANYTLS_LINKS="${ANYTLS_LINKS}${line}\n"
+                fi
+                ;;
+        esac
+    done
+    
+    print_success "链接重新生成完成"
+    save_links_to_files
+}
+
+# 清理链接文件
+cleanup_links() {
+    print_info "清理所有链接文件..."
+    rm -rf "${LINK_DIR}" 2>/dev/null || true
+    ALL_LINKS_TEXT=""
+    REALITY_LINKS=""
+    HYSTERIA2_LINKS=""
+    SOCKS5_LINKS=""
+    SHADOWTLS_LINKS=""
+    HTTPS_LINKS=""
+    ANYTLS_LINKS=""
+    print_success "链接文件已清理"
 }
 
 get_ip() {
@@ -263,7 +564,6 @@ setup_reality() {
     else
         INBOUNDS_JSON="${INBOUNDS_JSON},${inbound}"
     fi
-    INBOUND_JSON="$inbound"
     
     LINK="vless://${UUID}@${SERVER_IP}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI}&fp=chrome&pbk=${REALITY_PUBLIC}&sid=${SHORT_ID}&type=tcp#${AUTHOR_BLOG}"
     
@@ -281,6 +581,7 @@ setup_reality() {
     INBOUND_PROTOS+=("${PROTO}")
     INBOUND_RELAY_FLAGS+=(0)
     print_success "Reality 配置完成"
+    save_links_to_files
 }
 
 setup_hysteria2() {
@@ -306,6 +607,12 @@ setup_hysteria2() {
   }
 }'
     
+    if [[ -z "$INBOUNDS_JSON" ]]; then
+        INBOUNDS_JSON="$inbound"
+    else
+        INBOUNDS_JSON="${INBOUNDS_JSON},${inbound}"
+    fi
+    
     LINK="hysteria2://${HY2_PASSWORD}@${SERVER_IP}:${PORT}?insecure=1&sni=itunes.apple.com#${AUTHOR_BLOG}"
     PROTO="Hysteria2"
     EXTRA_INFO="密码: ${HY2_PASSWORD}\n证书: 自签证书(itunes.apple.com)"
@@ -318,6 +625,7 @@ setup_hysteria2() {
     INBOUND_PROTOS+=("${PROTO}")
     INBOUND_RELAY_FLAGS+=(0)
     print_success "Hysteria2 配置完成"
+    save_links_to_files
 }
 
 setup_socks5() {
@@ -354,7 +662,6 @@ setup_socks5() {
     else
         INBOUNDS_JSON="${INBOUNDS_JSON},${inbound}"
     fi
-    INBOUND_JSON="$inbound"
     PROTO="SOCKS5"
     local line="[SOCKS5] ${SERVER_IP}:${PORT}\\n${LINK}\\n"
     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\\n"
@@ -370,6 +677,7 @@ setup_socks5() {
     INBOUND_PROTOS+=("${PROTO}")
     INBOUND_RELAY_FLAGS+=(0)
     print_success "SOCKS5 配置完成"
+    save_links_to_files
 }
 
 setup_shadowtls() {
@@ -414,7 +722,6 @@ setup_shadowtls() {
     else
         INBOUNDS_JSON="${INBOUNDS_JSON},${inbound}"
     fi
-    INBOUND_JSON="$inbound"
     PROTO="ShadowTLS v3"
     local line="[ShadowTLS v3] ${SERVER_IP}:${PORT}\\n${LINK}\\n"
     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\\n"
@@ -426,6 +733,7 @@ setup_shadowtls() {
     INBOUND_PROTOS+=("${PROTO}")
     INBOUND_RELAY_FLAGS+=(0)
     print_success "ShadowTLS v3 配置完成"
+    save_links_to_files
 }
 
 setup_https() {
@@ -457,7 +765,6 @@ setup_https() {
     else
         INBOUNDS_JSON="${INBOUNDS_JSON},${inbound}"
     fi
-    INBOUND_JSON="$inbound"
     PROTO="HTTPS"
     EXTRA_INFO="UUID: ${UUID}\n证书: 自签证书(itunes.apple.com)"
     local line="[HTTPS] ${SERVER_IP}:${PORT}\\n${LINK}\\n"
@@ -469,6 +776,7 @@ setup_https() {
     INBOUND_PROTOS+=("${PROTO}")
     INBOUND_RELAY_FLAGS+=(0)
     print_success "HTTPS 配置完成"
+    save_links_to_files
 }
 
 setup_anytls() {
@@ -506,7 +814,6 @@ setup_anytls() {
     else
         INBOUNDS_JSON="${INBOUNDS_JSON},${inbound}"
     fi
-    INBOUND_JSON="$inbound"
     PROTO="AnyTLS"
     
     EXTRA_INFO="密码: ${ANYTLS_PASSWORD}\n证书: 自签证书(itunes.apple.com)\n证书指纹(SHA256): ${CERT_SHA256}\n\n✨ 支持的客户端:\n  • Shadowrocket / V2rayN - 直接导入链接"
@@ -519,6 +826,7 @@ setup_anytls() {
     INBOUND_PROTOS+=("${PROTO}")
     INBOUND_RELAY_FLAGS+=(0)
     print_success "AnyTLS 配置完成（已生成Shadowrocket和V2rayN格式）"
+    save_links_to_files
 }
 
 parse_socks_link() {
@@ -794,7 +1102,7 @@ show_main_menu() {
         fi
 
         if [[ -n "$relay_proto" && -n "$relay_port" ]]; then
-            outbound_desc="中转 (${relay_proto}) (${relay_port})"
+            outbound_desc="中转 (${relay_proto}:${relay_port})"
         else
             outbound_desc="中转"
         fi
@@ -803,12 +1111,14 @@ show_main_menu() {
     fi
 
     echo -e "  ${YELLOW}当前出站: ${GREEN}${outbound_desc}${NC}"
+    echo -e "  ${YELLOW}当前节点数: ${GREEN}${#INBOUND_TAGS[@]}${NC}"
     echo ""
     echo -e "  ${GREEN}[1]${NC} 添加/继续添加节点"
     echo -e "  ${GREEN}[2]${NC} 设置中转（SOCKS5 / HTTP(S)）"
     echo -e "  ${GREEN}[3]${NC} 删除中转，恢复直连"
     echo -e "  ${GREEN}[4]${NC} 配置 / 查看节点"
-    echo -e "  ${GREEN}[5]${NC} 一键删除脚本并退出"
+    echo -e "  ${GREEN}[5]${NC} 清理链接文件"
+    echo -e "  ${GREEN}[6]${NC} 一键删除脚本并退出"
     echo -e "  ${GREEN}[0]${NC} 退出脚本"
     echo ""
 }
@@ -827,6 +1137,12 @@ delete_self() {
         rm -f "$(command -v sb)" 2>/dev/null || true
     fi
 
+    print_info "删除链接文件..."
+    rm -rf "${LINK_DIR}" 2>/dev/null || true
+    
+    print_info "删除密钥文件..."
+    rm -f "${KEY_FILE}" 2>/dev/null || true
+    
     print_info "删除当前脚本文件: ${SCRIPT_PATH}"
     rm -f "${SCRIPT_PATH}" 2>/dev/null || true
 
@@ -837,7 +1153,7 @@ delete_self() {
 main_menu() {
     while true; do
         show_main_menu
-        read -p "请选择 [0-4]: " m_choice
+        read -p "请选择 [0-6]: " m_choice
         case $m_choice in
             1)
                 show_menu
@@ -852,6 +1168,9 @@ main_menu() {
                 config_and_view_menu
                 ;;
             5)
+                cleanup_links
+                ;;
+            6)
                 delete_self
                 ;;
             0)
@@ -924,6 +1243,9 @@ generate_config() {
 EOFCONFIG
     
     print_success "配置文件生成完成"
+    
+    # 生成配置后，重新生成链接并保存
+    regenerate_links_from_config
 }
 
 start_svc() {
@@ -1073,7 +1395,7 @@ config_and_view_menu() {
         echo -e "${CYAN}║              ${GREEN}配置 / 查看节点菜单${CYAN}              ║${NC}"
         echo -e "${CYAN}╚═══════════════════════════════════════════════════════╝${NC}"
         echo ""
-        echo -e "  ${GREEN}[1]${NC} 生成配置并启动服务（当前所有节点）"
+        echo -e "  ${GREEN}[1]${NC} 重新加载配置并启动服务"
         echo -e "  ${GREEN}[2]${NC} 查看全部节点链接"
         echo -e "  ${GREEN}[3]${NC} 查看 Reality 节点"
         echo -e "  ${GREEN}[4]${NC} 查看 Hysteria2 节点"
@@ -1081,19 +1403,28 @@ config_and_view_menu() {
         echo -e "  ${GREEN}[6]${NC} 查看 ShadowTLS 节点"
         echo -e "  ${GREEN}[7]${NC} 查看 HTTPS 节点"
         echo -e "  ${GREEN}[8]${NC} 查看 AnyTLS 节点"
+        echo -e "  ${GREEN}[9]${NC} 重新从配置文件生成链接"
         echo -e "  ${GREEN}[0]${NC} 返回主菜单"
         echo ""
 
-        read -p "请选择 [0-8]: " cv_choice
+        read -p "请选择 [0-9]: " cv_choice
         case $cv_choice in
             1)
-                if [[ -z "$INBOUNDS_JSON" ]]; then
-                    print_error "尚未添加任何节点，请先添加节点"
+                # 重新从配置文件加载配置
+                if load_inbounds_from_config; then
+                    generate_config && start_svc
+                    print_success "配置已重新加载并启动服务"
                 else
-                    generate_config && start_svc && show_result
+                    print_error "无法从配置文件加载配置，请先添加节点"
                 fi
+                read -p "按回车返回..." _
                 ;;
             2)
+                # 确保链接是最新的
+                if [[ ! -f "${ALL_LINKS_FILE}" ]] || [[ -z "${ALL_LINKS_TEXT}" ]]; then
+                    regenerate_links_from_config
+                fi
+                
                 clear
                 echo -e "${YELLOW}全部节点链接:${NC}"
                 echo ""
@@ -1106,6 +1437,11 @@ config_and_view_menu() {
                 read -p "按回车返回..." _
                 ;;
             3)
+                # 确保链接是最新的
+                if [[ ! -f "${REALITY_LINKS_FILE}" ]] || [[ -z "${REALITY_LINKS}" ]]; then
+                    regenerate_links_from_config
+                fi
+                
                 clear
                 echo -e "${YELLOW}Reality 节点:${NC}"
                 echo ""
@@ -1118,6 +1454,11 @@ config_and_view_menu() {
                 read -p "按回车返回..." _
                 ;;
             4)
+                # 确保链接是最新的
+                if [[ ! -f "${HYSTERIA2_LINKS_FILE}" ]] || [[ -z "${HYSTERIA2_LINKS}" ]]; then
+                    regenerate_links_from_config
+                fi
+                
                 clear
                 echo -e "${YELLOW}Hysteria2 节点:${NC}"
                 echo ""
@@ -1130,6 +1471,11 @@ config_and_view_menu() {
                 read -p "按回车返回..." _
                 ;;
             5)
+                # 确保链接是最新的
+                if [[ ! -f "${SOCKS5_LINKS_FILE}" ]] || [[ -z "${SOCKS5_LINKS}" ]]; then
+                    regenerate_links_from_config
+                fi
+                
                 clear
                 echo -e "${YELLOW}SOCKS5 节点:${NC}"
                 echo ""
@@ -1142,6 +1488,11 @@ config_and_view_menu() {
                 read -p "按回车返回..." _
                 ;;
             6)
+                # 确保链接是最新的
+                if [[ ! -f "${SHADOWTLS_LINKS_FILE}" ]] || [[ -z "${SHADOWTLS_LINKS}" ]]; then
+                    regenerate_links_from_config
+                fi
+                
                 clear
                 echo -e "${YELLOW}ShadowTLS 节点:${NC}"
                 echo ""
@@ -1154,6 +1505,11 @@ config_and_view_menu() {
                 read -p "按回车返回..." _
                 ;;
             7)
+                # 确保链接是最新的
+                if [[ ! -f "${HTTPS_LINKS_FILE}" ]] || [[ -z "${HTTPS_LINKS}" ]]; then
+                    regenerate_links_from_config
+                fi
+                
                 clear
                 echo -e "${YELLOW}HTTPS 节点:${NC}"
                 echo ""
@@ -1166,6 +1522,11 @@ config_and_view_menu() {
                 read -p "按回车返回..." _
                 ;;
             8)
+                # 确保链接是最新的
+                if [[ ! -f "${ANYTLS_LINKS_FILE}" ]] || [[ -z "${ANYTLS_LINKS}" ]]; then
+                    regenerate_links_from_config
+                fi
+                
                 clear
                 echo -e "${YELLOW}AnyTLS 节点:${NC}"
                 echo ""
@@ -1175,6 +1536,10 @@ config_and_view_menu() {
                     echo -e "$ANYTLS_LINKS"
                 fi
                 echo ""
+                read -p "按回车返回..." _
+                ;;
+            9)
+                regenerate_links_from_config
                 read -p "按回车返回..." _
                 ;;
             0)
@@ -1214,6 +1579,23 @@ main() {
     gen_keys
     get_ip
     setup_sb_shortcut
+    
+    # 从配置文件加载节点配置
+    if load_inbounds_from_config; then
+        print_success "从配置文件加载节点配置成功"
+    else
+        print_warning "无法从配置文件加载节点配置，或配置文件不存在"
+    fi
+    
+    # 加载已保存的链接
+    load_links_from_files
+    
+    # 如果配置文件存在但链接为空，尝试重新生成链接
+    if [[ -f "${CONFIG_FILE}" ]] && [[ -z "${ALL_LINKS_TEXT}" ]]; then
+        print_info "检测到配置文件存在，尝试重新生成链接..."
+        regenerate_links_from_config
+    fi
+    
     main_menu
 }
 
