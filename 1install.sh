@@ -653,6 +653,8 @@ setup_relay() {
                 print_error "无效选项"
                 ;;
         esac
+        echo ""
+        read -p "按回车返回主菜单..." 
     done
 }
 
@@ -705,6 +707,8 @@ show_menu() {
             start_svc || return 1
             show_result
         fi
+        echo ""
+        read -p "按回车返回主菜单..." 
     done
 }
 
@@ -847,6 +851,8 @@ main_menu() {
                 print_error "无效选项"
                 ;;
         esac
+        echo ""
+        read -p "按回车返回主菜单..." _
     done
 }
 
@@ -1158,6 +1164,8 @@ config_and_view_menu() {
                 print_error "无效选项"
                 ;;
         esac
+        echo ""
+        read -p "按回车返回主菜单..." _
     done
 }
 
