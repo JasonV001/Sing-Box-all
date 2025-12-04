@@ -1059,7 +1059,7 @@ show_main_menu() {
 }
 
 delete_self() {
-    echo -e "${YELLOW}此操作将删除当前脚本以及快捷命令 sb，且无法恢复。${NC}"
+    echo -e "${YELLOW}此操作将卸载 sing-box、删除所有节点配置、证书、快捷命令 sb 和当前脚本，且无法恢复。${NC}"
     read -p "确认删除？(y/N): " CONFIRM_DELETE
     CONFIRM_DELETE=${CONFIRM_DELETE:-N}
     if [[ ! "$CONFIRM_DELETE" =~ ^[Yy]$ ]]; then
@@ -1067,18 +1067,59 @@ delete_self() {
         return 0
     fi
 
+    # 停止并禁用 sing-box 服务
+    print_info "停止 sing-box 服务（如存在）..."
+    if systemctl list-unit-files | grep -q '^sing-box\.service'; then
+        systemctl stop sing-box 2>/dev/null || true
+        systemctl disable sing-box 2>/dev/null || true
+    fi
+
+    # 删除 systemd service 文件
+    if [[ -f /etc/systemd/system/sing-box.service ]]; then
+        print_info "删除 sing-box systemd 服务文件..."
+        rm -f /etc/systemd/system/sing-box.service 2>/dev/null || true
+        systemctl daemon-reload 2>/dev/null || true
+    fi
+
+    # 删除 sing-box 二进制
+    if command -v sing-box &>/dev/null; then
+        local sb_bin
+        sb_bin="$(command -v sing-box)"
+        print_info "删除 sing-box 二进制: ${sb_bin}"
+        rm -f "${sb_bin}" 2>/dev/null || true
+    else
+        # 回退到默认安装路径
+        if [[ -f ${INSTALL_DIR}/sing-box ]]; then
+            print_info "删除 sing-box 二进制: ${INSTALL_DIR}/sing-box"
+            rm -f "${INSTALL_DIR}/sing-box" 2>/dev/null || true
+        fi
+    fi
+
+    # 删除配置目录
+    if [[ -d /etc/sing-box ]]; then
+        print_info "删除 /etc/sing-box 配置目录及所有节点配置..."
+        rm -rf /etc/sing-box 2>/dev/null || true
+    fi
+
+    # 删除证书目录
+    if [[ -d ${CERT_DIR} ]]; then
+        print_info "删除证书目录: ${CERT_DIR}"
+        rm -rf "${CERT_DIR}" 2>/dev/null || true
+    fi
+
+    # 删除快捷命令 sb
     print_info "删除快捷命令 sb（如存在）..."
     if command -v sb &>/dev/null; then
         rm -f "$(command -v sb)" 2>/dev/null || true
+    elif [[ -f /usr/local/bin/sb ]]; then
+        rm -f /usr/local/bin/sb 2>/dev/null || true
     fi
 
-    print_info "删除链接文件..."
-    rm -rf "${LINK_DIR}" 2>/dev/null || true
-    
+    # 删除当前脚本
     print_info "删除当前脚本文件: ${SCRIPT_PATH}"
     rm -f "${SCRIPT_PATH}" 2>/dev/null || true
 
-    print_success "脚本及快捷命令删除操作已完成，准备退出。"
+    print_success "已完成 sing-box 卸载和脚本清理，准备退出。"
     exit 0
 }
 
