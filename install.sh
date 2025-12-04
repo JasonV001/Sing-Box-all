@@ -61,7 +61,7 @@ SOCKS_USER=""
 SOCKS_PASS=""
 
 # 自签证书域名变量
-SELF_SIGNED_DOMAIN="itunes.apple.com"
+SELF_SIGNED_DOMAIN="time.is"
 
 print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 print_success() { echo -e "${GREEN}[✓]${NC} $1"; }
