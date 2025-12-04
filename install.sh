@@ -432,7 +432,7 @@ setup_anytls() {
 }'
     
     LINK_SHADOWROCKET="anytls://${ANYTLS_PASSWORD}@${SERVER_IP}:${PORT}?udp=1&hpkp=${CERT_SHA256}#${AUTHOR_BLOG}"
-    LINK_V2RAYN="anytls://${ANYTLS_PASSWORD}@${SERVER_IP}:${PORT}?security=tls&fp=firefox&insecure=1&type=tcp#${AUTHOR_BLOG}"
+    LINK_V2RAYN="anytls://${ANYTLS_PASSWORD}@${SERVER_IP}:${PORT}?security=tls&sni=itunes.apple.com&insecure=1#${AUTHOR_BLOG}"
     
     LINK="${LINK_SHADOWROCKET}"
     if [[ -z "$INBOUNDS_JSON" ]]; then
