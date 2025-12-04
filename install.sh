@@ -86,7 +86,7 @@ install_singbox() {
     
     if ! command -v jq &>/dev/null || ! command -v openssl &>/dev/null; then
         print_info "安装依赖包..."
-        apt-get update -qq && apt-get install -y curl wget jq openssl uuid-runtime qrencode >/dev/null 2>&1
+        apt-get update -qq && apt-get install -y curl wget jq openssl uuid-runtime >/dev/null 2>&1
     fi
     
     if command -v sing-box &>/dev/null; then
@@ -464,9 +464,8 @@ regenerate_links_from_config() {
                         cert_fp=$(openssl x509 -fingerprint -noout -sha256 -in "${CERT_DIR}/cert.pem" 2>/dev/null | awk -F '=' '{print $NF}')
                     fi
                     
-                    local link_shadowrocket="anytls://${password}@${SERVER_IP}:${port}?udp=1&hpkp=${cert_fp}#${AUTHOR_BLOG}"
                     local link_v2rayn="anytls://${password}@${SERVER_IP}:${port}?security=tls&fp=firefox&insecure=1&type=tcp#${AUTHOR_BLOG}"
-                    local line="[AnyTLS] ${SERVER_IP}:${port}\nShadowrocket: ${link_shadowrocket}\nV2rayN: ${link_v2rayn}\n"
+                    local line="[AnyTLS] ${SERVER_IP}:${port}\nV2rayN/NekoBox: ${link_v2rayn}\n"
                     
                     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
                     ANYTLS_LINKS="${ANYTLS_LINKS}${line}\n"
@@ -565,10 +564,8 @@ setup_reality() {
         INBOUNDS_JSON="${INBOUNDS_JSON},${inbound}"
     fi
     
+    # V2rayN/NekoBox 格式链接
     LINK="vless://${UUID}@${SERVER_IP}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI}&fp=chrome&pbk=${REALITY_PUBLIC}&sid=${SHORT_ID}&type=tcp#${AUTHOR_BLOG}"
-    
-    # Loon配置格式
-    LINK_LOON="${AUTHOR_BLOG} = VLESS,${SERVER_IP},${PORT},\"${UUID}\",transport=tcp,flow=xtls-rprx-vision,public-key=\"${REALITY_PUBLIC}\",short-id=${SHORT_ID},udp=true,block-quic=true,over-tls=true,tls-name=${SNI}"
     
     PROTO="Reality"
     EXTRA_INFO="UUID: ${UUID}\nPublic Key: ${REALITY_PUBLIC}\nShort ID: ${SHORT_ID}\nSNI: ${SNI}"
@@ -613,6 +610,7 @@ setup_hysteria2() {
         INBOUNDS_JSON="${INBOUNDS_JSON},${inbound}"
     fi
     
+    # Hysteria2 链接格式（NekoBox支持）
     LINK="hysteria2://${HY2_PASSWORD}@${SERVER_IP}:${PORT}?insecure=1&sni=itunes.apple.com#${AUTHOR_BLOG}"
     PROTO="Hysteria2"
     EXTRA_INFO="密码: ${HY2_PASSWORD}\n证书: 自签证书(itunes.apple.com)"
@@ -715,6 +713,7 @@ setup_shadowtls() {
     local plugin_json="{\"version\":\"3\",\"host\":\"${SNI}\",\"password\":\"${SHADOWTLS_PASSWORD}\"}"
     local plugin_base64=$(echo -n "$plugin_json" | base64 -w0)
     
+    # ShadowTLS 链接格式（NekoBox支持）
     LINK="ss://${ss_userinfo}@${SERVER_IP}:${PORT}?shadow-tls=${plugin_base64}#${AUTHOR_BLOG}"
     
     if [[ -z "$INBOUNDS_JSON" ]]; then
@@ -726,7 +725,7 @@ setup_shadowtls() {
     local line="[ShadowTLS v3] ${SERVER_IP}:${PORT}\\n${LINK}\\n"
     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\\n"
     SHADOWTLS_LINKS="${SHADOWTLS_LINKS}${line}\\n"
-    EXTRA_INFO="Shadowsocks方法: 2022-blake3-aes-128-gcm\nShadowsocks密码: ${SS_PASSWORD}\nShadowTLS密码: ${SHADOWTLS_PASSWORD}\n伪装域名: ${SNI}\n\n说明: 可直接复制链接导入 Shadowrocket"
+    EXTRA_INFO="Shadowsocks方法: 2022-blake3-aes-128-gcm\nShadowsocks密码: ${SS_PASSWORD}\nShadowTLS密码: ${SHADOWTLS_PASSWORD}\n伪装域名: ${SNI}"
     local tag="shadowtls-in-${PORT}"
     INBOUND_TAGS+=("${tag}")
     INBOUND_PORTS+=("${PORT}")
@@ -759,6 +758,7 @@ setup_https() {
   }
 }'
     
+    # V2rayN/NekoBox 格式链接
     LINK="vless://${UUID}@${SERVER_IP}:${PORT}?encryption=none&security=tls&sni=itunes.apple.com&type=tcp&allowInsecure=1#${AUTHOR_BLOG}"
     if [[ -z "$INBOUNDS_JSON" ]]; then
         INBOUNDS_JSON="$inbound"
@@ -805,10 +805,9 @@ setup_anytls() {
   }
 }'
     
-    LINK_SHADOWROCKET="anytls://${ANYTLS_PASSWORD}@${SERVER_IP}:${PORT}?udp=1&hpkp=${CERT_SHA256}#${AUTHOR_BLOG}"
-    LINK_V2RAYN="anytls://${ANYTLS_PASSWORD}@${SERVER_IP}:${PORT}?security=tls&fp=firefox&insecure=1&type=tcp#${AUTHOR_BLOG}"
+    # V2rayN/NekoBox 格式链接
+    LINK="anytls://${ANYTLS_PASSWORD}@${SERVER_IP}:${PORT}?security=tls&fp=firefox&insecure=1&type=tcp#${AUTHOR_BLOG}"
     
-    LINK="${LINK_SHADOWROCKET}"
     if [[ -z "$INBOUNDS_JSON" ]]; then
         INBOUNDS_JSON="$inbound"
     else
@@ -816,8 +815,8 @@ setup_anytls() {
     fi
     PROTO="AnyTLS"
     
-    EXTRA_INFO="密码: ${ANYTLS_PASSWORD}\n证书: 自签证书(itunes.apple.com)\n证书指纹(SHA256): ${CERT_SHA256}\n\n✨ 支持的客户端:\n  • Shadowrocket / V2rayN - 直接导入链接"
-    local line="[AnyTLS] ${SERVER_IP}:${PORT}\\n${LINK_SHADOWROCKET}\\nV2rayN: ${LINK_V2RAYN}\\n"
+    EXTRA_INFO="密码: ${ANYTLS_PASSWORD}\n证书: 自签证书(itunes.apple.com)\n证书指纹(SHA256): ${CERT_SHA256}"
+    local line="[AnyTLS] ${SERVER_IP}:${PORT}\\n${LINK}\\n"
     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\\n"
     ANYTLS_LINKS="${ANYTLS_LINKS}${line}\\n"
     local tag="anytls-in-${PORT}"
@@ -825,7 +824,7 @@ setup_anytls() {
     INBOUND_PORTS+=("${PORT}")
     INBOUND_PROTOS+=("${PROTO}")
     INBOUND_RELAY_FLAGS+=(0)
-    print_success "AnyTLS 配置完成（已生成Shadowrocket和V2rayN格式）"
+    print_success "AnyTLS 配置完成（已生成V2rayN/NekoBox格式）"
     save_links_to_files
 }
 
@@ -1404,88 +1403,55 @@ show_result() {
     
     echo -e "${CYAN}───────────────────────────────────────────────────────${NC}"
     
+    echo -e "${GREEN}📋 V2rayN/NekoBox 节点链接:${NC}"
+    echo -e "${CYAN}───────────────────────────────────────────────────────${NC}"
+    echo ""
+    echo -e "${YELLOW}${LINK}${NC}"
+    echo ""
+    
     if [[ "$PROTO" == "AnyTLS" ]]; then
-        echo -e "${GREEN}📋 Shadowrocket 剪贴板链接:${NC}"
+        echo -e "${CYAN}───────────────────────────────────────────────────────${NC}"
+        echo -e "${GREEN}✨ 客户端支持:${NC}"
         echo -e "${CYAN}───────────────────────────────────────────────────────${NC}"
         echo ""
-        echo -e "${YELLOW}${LINK}${NC}"
-        echo ""
-        
-        if command -v qrencode &>/dev/null; then
-            echo -e "${CYAN}───────────────────────────────────────────────────────${NC}"
-            echo -e "${GREEN}📱 二维码 (Shadowrocket):${NC}"
-            echo -e "${CYAN}───────────────────────────────────────────────────────${NC}"
-            echo ""
-            qrencode -t ANSIUTF8 -s 1 -m 1 "${LINK}"
-            echo ""
-        fi
-        
-        echo -e "${CYAN}───────────────────────────────────────────────────────${NC}"
-        echo -e "${GREEN}📋 V2rayN 专用链接:${NC}"
-        echo -e "${CYAN}───────────────────────────────────────────────────────${NC}"
-        echo ""
-        echo -e "${YELLOW}${LINK_V2RAYN}${NC}"
+        echo -e "  ${GREEN}• V2rayN / NekoBox:${NC}"
+        echo -e "    1. 复制上方链接"
+        echo -e "    2. 打开客户端，从剪贴板导入"
         echo ""
     
     elif [[ "$PROTO" == "Reality" ]]; then
-        echo -e "${GREEN}📋 剪贴板链接:${NC}"
+        echo -e "${CYAN}───────────────────────────────────────────────────────${NC}"
+        echo -e "${GREEN}✨ 客户端支持:${NC}"
         echo -e "${CYAN}───────────────────────────────────────────────────────${NC}"
         echo ""
-        echo -e "${YELLOW}${LINK}${NC}"
-        echo ""
-        
-        if command -v qrencode &>/dev/null; then
-            echo -e "${CYAN}───────────────────────────────────────────────────────${NC}"
-            echo -e "${GREEN}📱 二维码:${NC}"
-            echo -e "${CYAN}───────────────────────────────────────────────────────${NC}"
-            echo ""
-            qrencode -t ANSIUTF8 -s 1 -m 1 "${LINK}"
-            echo ""
-        fi
-        
-        echo -e "${CYAN}───────────────────────────────────────────────────────${NC}"
-        echo -e "${GREEN}📋 Loon iOS 配置:${NC}"
-        echo -e "${CYAN}───────────────────────────────────────────────────────${NC}"
-        echo ""
-        echo -e "${YELLOW}${LINK_LOON}${NC}"
+        echo -e "  ${GREEN}• V2rayN / NekoBox:${NC}"
+        echo -e "    1. 复制上方链接"
+        echo -e "    2. 打开客户端，从剪贴板导入"
         echo ""
     else
-        echo -e "${GREEN}📋 剪贴板链接:${NC}"
+        echo -e "${CYAN}───────────────────────────────────────────────────────${NC}"
+        echo -e "${GREEN}✨ 客户端支持:${NC}"
         echo -e "${CYAN}───────────────────────────────────────────────────────${NC}"
         echo ""
-        echo -e "${YELLOW}${LINK}${NC}"
+        echo -e "  ${GREEN}• NekoBox:${NC}"
+        echo -e "    1. 复制上方链接"
+        echo -e "    2. 打开NekoBox，从剪贴板导入"
         echo ""
-        
-        if command -v qrencode &>/dev/null; then
-            echo -e "${CYAN}───────────────────────────────────────────────────────${NC}"
-            echo -e "${GREEN}📱 二维码:${NC}"
-            echo -e "${CYAN}───────────────────────────────────────────────────────${NC}"
-            echo ""
-            qrencode -t ANSIUTF8 -s 1 -m 1 "${LINK}"
-            echo ""
+        if [[ "$PROTO" == "Hysteria2" ]]; then
+            echo -e "  ${YELLOW}• V2rayN:${NC}"
+            echo -e "    不支持 Hysteria2 协议"
+        elif [[ "$PROTO" == "SOCKS5" ]]; then
+            echo -e "  ${YELLOW}• V2rayN:${NC}"
+            echo -e "    请使用 NekoBox 或系统代理设置"
         fi
     fi
     
     echo -e "${CYAN}───────────────────────────────────────────────────────${NC}"
     echo ""
     echo -e "${YELLOW}📱 使用方法:${NC}"
-    if [[ "$PROTO" == "AnyTLS" ]]; then
-        echo -e "  ${GREEN}Shadowrocket / V2rayN:${NC}"
-        echo -e "    1. 复制对应客户端的链接"
-        echo -e "    2. 打开客户端，从剪贴板导入"
-    elif [[ "$PROTO" == "Reality" ]]; then
-        echo -e "  ${GREEN}通用客户端:${NC}"
-        echo -e "    1. 复制链接或扫描二维码"
-        echo -e "    2. 打开客户端导入配置"
-        echo ""
-        echo -e "  ${GREEN}Loon (iOS):${NC}"
-        echo -e "    1. 复制上方 Loon 配置"
-        echo -e "    2. 粘贴到 Loon配置文件中 的 [Proxy] 部分"
-        echo -e "    3. 或者从vless开始复制，然后添加节点，从剪贴板导入"
-    else
-        echo -e "  1. 复制上面的链接或扫描二维码"
-        echo -e "  2. 打开客户端导入配置"
-    fi
+    echo -e "  1. 复制上面的链接"
+    echo -e "  2. 打开 V2rayN 或 NekoBox 客户端"
+    echo -e "  3. 从剪贴板导入配置"
     echo ""
     echo -e "${YELLOW}⚙️  服务管理:${NC}"
     echo -e "  查看状态: ${CYAN}systemctl status sing-box${NC}"
@@ -1493,16 +1459,13 @@ show_result() {
     echo -e "  重启服务: ${CYAN}systemctl restart sing-box${NC}"
     echo -e "  停止服务: ${CYAN}systemctl stop sing-box${NC}"
     echo ""
-    echo -e "${GREEN}💡  ${YELLOW}https://${AUTHOR_BLOG}${NC}"
-    echo -e "${GREEN}📧 ${YELLOW}${NC}"
-    echo ""
 }
 
 config_and_view_menu() {
     while true; do
         show_banner
         echo -e "${CYAN}╔═══════════════════════════════════════════════════════╗${NC}"
-        echo -e "${CYAN}║              ${GREEN}配置 / 查看节点菜单${CYAN}              ║${NC}"
+        echo -e "${CYAN}║              ${GREEN}配置 / 查看节点菜单${CYAN}        ║${NC}"
         echo -e "${CYAN}╚═══════════════════════════════════════════════════════╝${NC}"
         echo ""
         echo -e "  ${GREEN}[1]${NC} 重新加载配置并启动服务"
