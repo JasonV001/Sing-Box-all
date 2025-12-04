@@ -60,6 +60,9 @@ ANYTLS_PASSWORD=""
 SOCKS_USER=""
 SOCKS_PASS=""
 
+# 自签证书域名变量
+SELF_SIGNED_DOMAIN="itunes.apple.com"
+
 print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 print_success() { echo -e "${GREEN}[✓]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[!]${NC} $1"; }
@@ -130,10 +133,16 @@ EOFSVC
 
 gen_cert() {
     mkdir -p ${CERT_DIR}
+    
+    # 询问自签证书域名
+    read -p "自签证书域名 [${SELF_SIGNED_DOMAIN}]: " DOMAIN_INPUT
+    DOMAIN_INPUT=${DOMAIN_INPUT:-${SELF_SIGNED_DOMAIN}}
+    SELF_SIGNED_DOMAIN="${DOMAIN_INPUT}"
+    
     openssl genrsa -out ${CERT_DIR}/private.key 2048 2>/dev/null
     openssl req -new -x509 -days 36500 -key ${CERT_DIR}/private.key -out ${CERT_DIR}/cert.pem \
-        -subj "/C=US/ST=California/L=Cupertino/O=Apple Inc./CN=itunes.apple.com" 2>/dev/null
-    print_success "证书生成完成（itunes.apple.com，有效期100年）"
+        -subj "/C=US/ST=California/L=Cupertino/O=Apple Inc./CN=${SELF_SIGNED_DOMAIN}" 2>/dev/null
+    print_success "证书生成完成（${SELF_SIGNED_DOMAIN}，有效期100年）"
 }
 
 gen_keys() {
@@ -353,6 +362,11 @@ regenerate_links_from_config() {
         . "${KEY_FILE}"
     fi
     
+    # 确保 SERVER_IP 已设置
+    if [[ -z "${SERVER_IP}" ]]; then
+        get_ip
+    fi
+    
     if [[ ! -f "${CONFIG_FILE}" ]]; then
         print_warning "配置文件不存在，无法重新生成链接"
         return 1
@@ -482,14 +496,8 @@ regenerate_links_from_config() {
             "anytls")
                 local password=$(echo "$inbound" | jq -r '.users[0].password // ""' 2>/dev/null)
                 if [[ -n "$password" ]]; then
-                    # 获取证书指纹
-                    local cert_fp=""
-                    if [[ -f "${CERT_DIR}/cert.pem" ]]; then
-                        cert_fp=$(openssl x509 -fingerprint -noout -sha256 -in "${CERT_DIR}/cert.pem" 2>/dev/null | awk -F '=' '{print $NF}')
-                    fi
-                    
-                    # 修正：移除 "V2rayN/NekoBox: " 前缀，保持格式一致
-                    local link_v2rayn="anytls://${password}@${SERVER_IP}:${port}?security=tls&fp=firefox&insecure=1&type=tcp#${AUTHOR_BLOG}"
+                    # 使用 chrome 指纹
+                    local link_v2rayn="anytls://${password}@${SERVER_IP}:${port}?security=tls&fp=chrome&insecure=1&type=tcp#${AUTHOR_BLOG}"
                     local line="[AnyTLS] ${SERVER_IP}:${port}\n${link_v2rayn}\n"
                     
                     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
@@ -804,9 +812,9 @@ setup_hysteria2() {
     fi
     
     # Hysteria2 链接格式（NekoBox支持）
-    LINK="hysteria2://${HY2_PASSWORD}@${SERVER_IP}:${PORT}?insecure=1&sni=itunes.apple.com#${AUTHOR_BLOG}"
+    LINK="hysteria2://${HY2_PASSWORD}@${SERVER_IP}:${PORT}?insecure=1&sni=${SELF_SIGNED_DOMAIN}#${AUTHOR_BLOG}"
     PROTO="Hysteria2"
-    EXTRA_INFO="密码: ${HY2_PASSWORD}\n证书: 自签证书(itunes.apple.com)"
+    EXTRA_INFO="密码: ${HY2_PASSWORD}\n证书: 自签证书(${SELF_SIGNED_DOMAIN})\n指纹: chrome"
     local line="[Hysteria2] ${SERVER_IP}:${PORT}\\n${LINK}\\n"
     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\\n"
     HYSTERIA2_LINKS="${HYSTERIA2_LINKS}${line}\\n"
@@ -945,21 +953,21 @@ setup_https() {
   "users": [{"uuid": "'${UUID}'"}],
   "tls": {
     "enabled": true,
-    "server_name": "itunes.apple.com",
+    "server_name": "'${SELF_SIGNED_DOMAIN}'",
     "certificate_path": "'${CERT_DIR}'/cert.pem",
     "key_path": "'${CERT_DIR}'/private.key"
   }
 }'
     
     # V2rayN/NekoBox 格式链接
-    LINK="vless://${UUID}@${SERVER_IP}:${PORT}?encryption=none&security=tls&sni=itunes.apple.com&type=tcp&allowInsecure=1#${AUTHOR_BLOG}"
+    LINK="vless://${UUID}@${SERVER_IP}:${PORT}?encryption=none&security=tls&sni=${SELF_SIGNED_DOMAIN}&type=tcp&allowInsecure=1#${AUTHOR_BLOG}"
     if [[ -z "$INBOUNDS_JSON" ]]; then
         INBOUNDS_JSON="$inbound"
     else
         INBOUNDS_JSON="${INBOUNDS_JSON},${inbound}"
     fi
     PROTO="HTTPS"
-    EXTRA_INFO="UUID: ${UUID}\n证书: 自签证书(itunes.apple.com)"
+    EXTRA_INFO="UUID: ${UUID}\n证书: 自签证书(${SELF_SIGNED_DOMAIN})\n指纹: chrome"
     local line="[HTTPS] ${SERVER_IP}:${PORT}\\n${LINK}\\n"
     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\\n"
     HTTPS_LINKS="${HTTPS_LINKS}${line}\\n"
@@ -979,9 +987,6 @@ setup_anytls() {
     print_info "生成自签证书..."
     gen_cert
     
-    print_info "生成证书指纹..."
-    CERT_SHA256=$(openssl x509 -fingerprint -noout -sha256 -in ${CERT_DIR}/cert.pem | awk -F '=' '{print $NF}')
-    
     print_info "生成配置文件..."
     
     local inbound='{
@@ -999,7 +1004,7 @@ setup_anytls() {
 }'
     
     # V2rayN/NekoBox 格式链接
-    LINK="anytls://${ANYTLS_PASSWORD}@${SERVER_IP}:${PORT}?security=tls&fp=firefox&insecure=1&type=tcp#${AUTHOR_BLOG}"
+    LINK="anytls://${ANYTLS_PASSWORD}@${SERVER_IP}:${PORT}?security=tls&fp=chrome&insecure=1&type=tcp#${AUTHOR_BLOG}"
     
     if [[ -z "$INBOUNDS_JSON" ]]; then
         INBOUNDS_JSON="$inbound"
@@ -1008,8 +1013,8 @@ setup_anytls() {
     fi
     PROTO="AnyTLS"
     
-    EXTRA_INFO="密码: ${ANYTLS_PASSWORD}\n证书: 自签证书(itunes.apple.com)\n证书指纹(SHA256): ${CERT_SHA256}"
-    local line="[AnyTLS] ${SERVER_IP}:${PORT}\\n${LINK}\\n"  # 修正：移除额外前缀
+    EXTRA_INFO="密码: ${ANYTLS_PASSWORD}\n证书: 自签证书(${SELF_SIGNED_DOMAIN})\n指纹: chrome"
+    local line="[AnyTLS] ${SERVER_IP}:${PORT}\\n${LINK}\\n"
     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\\n"
     ANYTLS_LINKS="${ANYTLS_LINKS}${line}\\n"
     local tag="anytls-in-${PORT}"
@@ -1017,7 +1022,7 @@ setup_anytls() {
     INBOUND_PORTS+=("${PORT}")
     INBOUND_PROTOS+=("${PROTO}")
     INBOUND_RELAY_FLAGS+=(0)
-    print_success "AnyTLS 配置完成（已生成V2rayN/NekoBox格式）"
+    print_success "AnyTLS 配置完成"
     save_links_to_files
 }
 
@@ -1641,6 +1646,20 @@ show_result() {
             echo -e "    请使用 NekoBox 或系统代理设置"
         fi
     fi
+    
+    echo -e "${CYAN}───────────────────────────────────────────────────────${NC}"
+    echo ""
+    echo -e "${YELLOW}📱 使用方法:${NC}"
+    echo -e "  1. 复制上面的链接"
+    echo -e "  2. 打开 V2rayN 或 NekoBox 客户端"
+    echo -e "  3. 从剪贴板导入配置"
+    echo ""
+    echo -e "${YELLOW}⚙️  服务管理:${NC}"
+    echo -e "  查看状态: ${CYAN}systemctl status sing-box${NC}"
+    echo -e "  查看日志: ${CYAN}journalctl -u sing-box -f${NC}"
+    echo -e "  重启服务: ${CYAN}systemctl restart sing-box${NC}"
+    echo -e "  停止服务: ${CYAN}systemctl stop sing-box${NC}"
+    echo ""
 }
 
 config_and_view_menu() {
