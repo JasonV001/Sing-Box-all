@@ -1661,7 +1661,7 @@ main() {
     
     install_singbox
     mkdir -p /etc/sing-box
-    gen_keys
+    gen_keys  # 这个函数会加载或生成密钥
     get_ip
     setup_sb_shortcut
     
@@ -1683,5 +1683,3 @@ main() {
     
     main_menu
 }
-
-main
