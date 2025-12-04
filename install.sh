@@ -683,12 +683,35 @@ EOFCONFIG
     restart_service=${restart_service:-N}
     
     if [[ "$restart_service" =~ ^[Yy]$ ]]; then
+        # 确保服务文件存在
+        if [[ ! -f /etc/systemd/system/sing-box.service ]]; then
+            print_warning "服务文件不存在，正在重新创建..."
+            cat > /etc/systemd/system/sing-box.service << EOFSVC
+[Unit]
+Description=sing-box service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=${INSTALL_DIR}/sing-box run -c ${CONFIG_FILE}
+Restart=on-failure
+RestartSec=10s
+LimitNOFILE=infinity
+
+[Install]
+WantedBy=multi-user.target
+EOFSVC
+            systemctl daemon-reload
+            systemctl enable sing-box >/dev/null 2>&1
+            print_success "服务文件已重新创建"
+        fi
+        
         systemctl start sing-box
         sleep 2
         if systemctl is-active --quiet sing-box; then
             print_success "服务已启动 (空配置)"
         else
-            print_error "服务启动失败"
+            print_error "服务启动失败，请检查日志: journalctl -u sing-box -n 20"
         fi
     fi
 }
@@ -1326,10 +1349,17 @@ show_main_menu() {
 delete_self() {
     echo -e "${YELLOW}此操作将卸载 sing-box、删除所有节点配置、证书、快捷命令 sb 和当前脚本，且无法恢复。${NC}"
     echo -e "${RED}警告：这将永久删除所有数据！${NC}"
-    read -p "确认删除？(y/N): " CONFIRM_DELETE
+    echo ""
+    echo -e "${CYAN}注意:${NC}"
+    echo -e "  1. 此操作与'删除全部节点'不同"
+    echo -e "  2. '删除全部节点'只会清空配置，保留服务和脚本"
+    echo -e "  3. 此操作会完全卸载 sing-box 和脚本"
+    echo ""
+    
+    read -p "确认完全卸载？(y/N): " CONFIRM_DELETE
     CONFIRM_DELETE=${CONFIRM_DELETE:-N}
     if [[ ! "$CONFIRM_DELETE" =~ ^[Yy]$ ]]; then
-        print_info "已取消删除操作"
+        print_info "已取消卸载操作"
         return 0
     fi
 
