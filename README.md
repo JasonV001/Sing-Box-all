@@ -1,9 +1,8 @@
 ## 🚀 一键安装
 
 ```
-wget -O /root/install.sh https://raw.githubusercontent.com/JasonV001/Sing-Box-all/main/install.sh && bash /root/install.sh
+wget -O /root/install.sh https://raw.githubusercontent.com/JasonV001/Sing-Box-all/main/install.sh && chmod +x /root/install.sh && bash /root/install.sh
 ```
-
 ## ✨ 支持协议
 
 | 协议 | 特点 | 推荐度 |
@@ -20,4 +19,9 @@ wget -O /root/install.sh https://raw.githubusercontent.com/JasonV001/Sing-Box-al
 查看日志: journalctl -u sing-box -f
 重启服务: systemctl restart sing-box
 停止服务: systemctl stop sing-box
+```
+
+# 测试
+```
+wget -O /root/install.sh https://raw.githubusercontent.com/JasonV001/Sing-Box-all/refs/heads/ceshi/install.sh && bash /root/install.sh
 ```
