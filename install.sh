@@ -1994,7 +1994,7 @@ main() {
     
     # 如果配置文件存在但链接为空，尝试重新生成链接
     if [[ -f "${CONFIG_FILE}" ]] && [[ -z "${ALL_LINKS_TEXT}" ]]; then
-        print_info "检测到配置文件存在，尝试重新生成链接"
+        print_info "检测到配置文件存在，尝试重新生成链接..."
         regenerate_links_from_config
     fi
     
