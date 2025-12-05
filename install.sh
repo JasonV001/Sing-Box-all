@@ -414,7 +414,7 @@ regenerate_links_from_config() {
                     if [[ "$reality_enabled" == "true" ]]; then
                         # Reality
                         local uuid=$(echo "$inbound" | jq -r '.users[0].uuid // ""' 2>/dev/null)
-                        local sni=$(echo "$inbound" | jq -r '.tls.server_name // "itunes.apple.com"' 2>/dev/null)
+                        local sni=$(echo "$inbound" | jq -r '.tls.server_name // "${SELF_SIGNED_DOMAIN}"' 2>/dev/null)
                         local pbk=$(echo "$inbound" | jq -r '.tls.reality.public_key // ""' 2>/dev/null)
                         local sid=$(echo "$inbound" | jq -r '.tls.reality.short_id[0] // ""' 2>/dev/null)
                         
@@ -434,7 +434,7 @@ regenerate_links_from_config() {
                         fi
                         
                         if [[ -n "$uuid" && -n "$pbk" ]]; then
-                            local link="vless://${uuid}@${SERVER_IP}:${port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${sni}&fp=chrome&pbk=${pbk}&sid=${sid}&type=tcp#${AUTHOR_BLOG}"
+                            local link="vless://${uuid}@${SERVER_IP}:${port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${sni}&fp=chrome&pbk=${pbk}&sid=${sid}&type=tcp#${PROTO}-${SERVER_IP}"
                             local line="[Reality] ${SERVER_IP}:${port}\n${link}\n"
                             ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
                             REALITY_LINKS="${REALITY_LINKS}${line}\n"
@@ -447,7 +447,7 @@ regenerate_links_from_config() {
                         fi
                         
                         if [[ -n "$uuid" ]]; then
-                            local link="vless://${uuid}@${SERVER_IP}:${port}?encryption=none&security=tls&sni=itunes.apple.com&type=tcp&allowInsecure=1#${AUTHOR_BLOG}"
+                            local link="vless://${uuid}@${SERVER_IP}:${port}?encryption=none&security=tls&sni=itunes.apple.com&type=tcp&allowInsecure=1#${PROTO}-${SERVER_IP}"
                             local line="[HTTPS] ${SERVER_IP}:${port}\n${link}\n"
                             ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
                             HTTPS_LINKS="${HTTPS_LINKS}${line}\n"
@@ -458,7 +458,7 @@ regenerate_links_from_config() {
             "hysteria2")
                 local password=$(echo "$inbound" | jq -r '.users[0].password // ""' 2>/dev/null)
                 if [[ -n "$password" ]]; then
-                    local link="hysteria2://${password}@${SERVER_IP}:${port}?insecure=1&sni=itunes.apple.com#${AUTHOR_BLOG}"
+                    local link="hysteria2://${password}@${SERVER_IP}:${port}?insecure=1&sni=itunes.apple.com#${PROTO}-${SERVER_IP}"
                     local line="[Hysteria2] ${SERVER_IP}:${port}\n${link}\n"
                     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
                     HYSTERIA2_LINKS="${HYSTERIA2_LINKS}${line}\n"
@@ -470,9 +470,9 @@ regenerate_links_from_config() {
                 local link=""
                 
                 if [[ -n "$username" && -n "$password" ]]; then
-                    link="socks5://${username}:${password}@${SERVER_IP}:${port}#${AUTHOR_BLOG}"
+                    link="socks5://${username}:${password}@${SERVER_IP}:${port}#${PROTO}-${SERVER_IP}"
                 else
-                    link="socks5://${SERVER_IP}:${port}#${AUTHOR_BLOG}"
+                    link="socks5://${SERVER_IP}:${port}#${PROTO}-${SERVER_IP}"
                 fi
                 
                 if [[ -n "$link" ]]; then
@@ -484,7 +484,7 @@ regenerate_links_from_config() {
             "shadowtls")
                 # ShadowTLS 需要特殊处理
                 local password=$(echo "$inbound" | jq -r '.users[0].password // ""' 2>/dev/null)
-                local sni=$(echo "$inbound" | jq -r '.handshake.server // "www.bing.com"' 2>/dev/null)
+                local sni=$(echo "$inbound" | jq -r '.handshake.server // "${SELF_SIGNED_DOMAIN}"' 2>/dev/null)
                 
                 if [[ -n "$password" ]]; then
                     # 简化处理，只标记存在
@@ -497,7 +497,7 @@ regenerate_links_from_config() {
                 local password=$(echo "$inbound" | jq -r '.users[0].password // ""' 2>/dev/null)
                 if [[ -n "$password" ]]; then
                     # 使用 chrome 指纹，无需获取证书指纹
-                    local link_v2rayn="anytls://${password}@${SERVER_IP}:${port}?security=tls&fp=chrome&insecure=1&type=tcp#${AUTHOR_BLOG}"
+                    local link_v2rayn="anytls://${password}@${SERVER_IP}:${port}?security=tls&fp=chrome&insecure=1&type=tcp#${PROTO}-${SERVER_IP}"
                     local line="[AnyTLS] ${SERVER_IP}:${port}\n${link_v2rayn}\n"
                     
                     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
