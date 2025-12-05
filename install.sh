@@ -45,6 +45,7 @@ INBOUND_TAGS=()
 INBOUND_PORTS=()
 INBOUND_PROTOS=()
 INBOUND_RELAY_FLAGS=()
+INBOUND_SNIS=()  # 存储每个节点的SNI
 
 RELAY_JSON=""
 
@@ -60,8 +61,8 @@ ANYTLS_PASSWORD=""
 SOCKS_USER=""
 SOCKS_PASS=""
 
-# 自签证书域名变量
-SELF_SIGNED_DOMAIN="itunes.apple.com"
+# 默认自签证书域名
+DEFAULT_SNI="time.is"
 
 print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 print_success() { echo -e "${GREEN}[✓]${NC} $1"; }
@@ -75,12 +76,14 @@ show_banner() {
 
 detect_system() {
     [[ -f /etc/os-release ]] && . /etc/os-release || { print_error "无法检测系统"; exit 1; }
+    OS="${NAME}"
     ARCH=$(uname -m)
     case $ARCH in
         x86_64) ARCH="amd64" ;;
         aarch64) ARCH="arm64" ;;
         *) print_error "不支持的架构: $ARCH"; exit 1 ;;
     esac
+    print_success "系统: ${OS} (${ARCH})"
 }
 
 install_singbox() {
@@ -132,18 +135,18 @@ EOFSVC
     print_success "sing-box 安装完成 (版本: ${LATEST})"
 }
 
-gen_cert() {
-    mkdir -p ${CERT_DIR}
+# 为特定节点生成证书
+gen_cert_for_sni() {
+    local sni="$1"
+    local node_cert_dir="${CERT_DIR}/${sni}"
     
-    # 询问自签证书域名
-    read -p "自签证书域名 [${SELF_SIGNED_DOMAIN}]: " DOMAIN_INPUT
-    DOMAIN_INPUT=${DOMAIN_INPUT:-${SELF_SIGNED_DOMAIN}}
-    SELF_SIGNED_DOMAIN="${DOMAIN_INPUT}"
+    mkdir -p "${node_cert_dir}"
     
-    openssl genrsa -out ${CERT_DIR}/private.key 2048 2>/dev/null
-    openssl req -new -x509 -days 36500 -key ${CERT_DIR}/private.key -out ${CERT_DIR}/cert.pem \
-        -subj "/C=US/ST=California/L=Cupertino/O=Apple Inc./CN=${SELF_SIGNED_DOMAIN}" 2>/dev/null
-    print_success "证书生成完成（${SELF_SIGNED_DOMAIN}，有效期100年）"
+    openssl genrsa -out "${node_cert_dir}/private.key" 2048 2>/dev/null
+    openssl req -new -x509 -days 36500 -key "${node_cert_dir}/private.key" -out "${node_cert_dir}/cert.pem" \
+        -subj "/C=US/ST=California/L=Cupertino/O=Apple Inc./CN=${sni}" 2>/dev/null
+    
+    print_success "证书生成完成（${sni}，有效期100年）"
 }
 
 gen_keys() {
@@ -251,6 +254,7 @@ load_inbounds_from_config() {
     INBOUND_PORTS=()
     INBOUND_PROTOS=()
     INBOUND_RELAY_FLAGS=()
+    INBOUND_SNIS=()
     
     if [[ ! -f "${CONFIG_FILE}" ]]; then
         print_warning "配置文件不存在，无法加载节点配置"
@@ -296,23 +300,35 @@ load_inbounds_from_config() {
         
         # 根据 tag 判断协议类型
         local proto="unknown"
+        local sni=""
         if [[ "$tag" == *"vless-in-"* ]]; then
             proto="Reality"
+            sni=$(echo "$inbound" | jq -r '.tls.server_name // ""' 2>/dev/null)
         elif [[ "$tag" == *"hy2-in-"* ]]; then
             proto="Hysteria2"
+            sni=$(echo "$inbound" | jq -r '.tls.server_name // ""' 2>/dev/null)
         elif [[ "$tag" == *"socks-in"* ]]; then
             proto="SOCKS5"
         elif [[ "$tag" == *"shadowtls-in-"* ]]; then
             proto="ShadowTLS v3"
+            sni=$(echo "$inbound" | jq -r '.handshake.server // ""' 2>/dev/null)
         elif [[ "$tag" == *"vless-tls-in-"* ]]; then
             proto="HTTPS"
+            sni=$(echo "$inbound" | jq -r '.tls.server_name // ""' 2>/dev/null)
         elif [[ "$tag" == *"anytls-in-"* ]]; then
             proto="AnyTLS"
+            sni=$(echo "$inbound" | jq -r '.tls.server_name // ""' 2>/dev/null)
+        fi
+        
+        # 如果没有获取到SNI，使用默认值
+        if [[ -z "$sni" ]]; then
+            sni="${DEFAULT_SNI}"
         fi
         
         INBOUND_TAGS+=("$tag")
         INBOUND_PORTS+=("$port")
         INBOUND_PROTOS+=("$proto")
+        INBOUND_SNIS+=("$sni")
         INBOUND_RELAY_FLAGS+=(0)  # 默认直连
     done
     
@@ -320,7 +336,7 @@ load_inbounds_from_config() {
     
     # 加载中转配置
     if jq -e '.outbounds[] | select(.tag == "relay")' "${CONFIG_FILE}" >/dev/null 2>&1; then
-        RELAY_JSON=$(jq -c '.outbounds[] | select(.tag == "relay')' "${CONFIG_FILE}")
+        RELAY_JSON=$(jq -c '.outbounds[] | select(.tag == "relay")' "${CONFIG_FILE}")
         OUTBOUND_TAG="relay"
         
         # 尝试获取路由规则，确定哪些inbound走中转
@@ -414,7 +430,7 @@ regenerate_links_from_config() {
                     if [[ "$reality_enabled" == "true" ]]; then
                         # Reality
                         local uuid=$(echo "$inbound" | jq -r '.users[0].uuid // ""' 2>/dev/null)
-                        local sni=$(echo "$inbound" | jq -r '.tls.server_name // "itunes.apple.com"' 2>/dev/null)
+                        local sni=$(echo "$inbound" | jq -r '.tls.server_name // ""' 2>/dev/null)
                         local pbk=$(echo "$inbound" | jq -r '.tls.reality.public_key // ""' 2>/dev/null)
                         local sid=$(echo "$inbound" | jq -r '.tls.reality.short_id[0] // ""' 2>/dev/null)
                         
@@ -433,22 +449,34 @@ regenerate_links_from_config() {
                             sid="${SHORT_ID}"
                         fi
                         
+                        # 如果没有SNI，使用默认值
+                        if [[ -z "$sni" ]]; then
+                            sni="${DEFAULT_SNI}"
+                        fi
+                        
                         if [[ -n "$uuid" && -n "$pbk" ]]; then
-                            local link="vless://${uuid}@${SERVER_IP}:${port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${sni}&fp=chrome&pbk=${pbk}&sid=${sid}&type=tcp#${AUTHOR_BLOG}"
-                            local line="[Reality] ${SERVER_IP}:${port}\n${link}\n"
+                            local link="vless://${uuid}@${SERVER_IP}:${port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${sni}&fp=chrome&pbk=${pbk}&sid=${sid}&type=tcp#Reality-${SERVER_IP}"
+                            local line="[Reality] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n"
                             ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
                             REALITY_LINKS="${REALITY_LINKS}${line}\n"
                         fi
                     else
                         # HTTPS
                         local uuid=$(echo "$inbound" | jq -r '.users[0].uuid // ""' 2>/dev/null)
+                        local sni=$(echo "$inbound" | jq -r '.tls.server_name // ""' 2>/dev/null)
+                        
                         if [[ -z "$uuid" && -n "${UUID}" ]]; then
                             uuid="${UUID}"
                         fi
                         
+                        # 如果没有SNI，使用默认值
+                        if [[ -z "$sni" ]]; then
+                            sni="${DEFAULT_SNI}"
+                        fi
+                        
                         if [[ -n "$uuid" ]]; then
-                            local link="vless://${uuid}@${SERVER_IP}:${port}?encryption=none&security=tls&sni=itunes.apple.com&type=tcp&allowInsecure=1#${AUTHOR_BLOG}"
-                            local line="[HTTPS] ${SERVER_IP}:${port}\n${link}\n"
+                            local link="vless://${uuid}@${SERVER_IP}:${port}?encryption=none&security=tls&sni=${sni}&type=tcp&allowInsecure=1#HTTPS-${SERVER_IP}"
+                            local line="[HTTPS] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n"
                             ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
                             HTTPS_LINKS="${HTTPS_LINKS}${line}\n"
                         fi
@@ -457,9 +485,16 @@ regenerate_links_from_config() {
                 ;;
             "hysteria2")
                 local password=$(echo "$inbound" | jq -r '.users[0].password // ""' 2>/dev/null)
+                local sni=$(echo "$inbound" | jq -r '.tls.server_name // ""' 2>/dev/null)
+                
+                # 如果没有SNI，使用默认值
+                if [[ -z "$sni" ]]; then
+                    sni="${DEFAULT_SNI}"
+                fi
+                
                 if [[ -n "$password" ]]; then
-                    local link="hysteria2://${password}@${SERVER_IP}:${port}?insecure=1&sni=itunes.apple.com#${AUTHOR_BLOG}"
-                    local line="[Hysteria2] ${SERVER_IP}:${port}\n${link}\n"
+                    local link="hysteria2://${password}@${SERVER_IP}:${port}?insecure=1&sni=${sni}#Hysteria2-${SERVER_IP}"
+                    local line="[Hysteria2] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n"
                     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
                     HYSTERIA2_LINKS="${HYSTERIA2_LINKS}${line}\n"
                 fi
@@ -470,9 +505,9 @@ regenerate_links_from_config() {
                 local link=""
                 
                 if [[ -n "$username" && -n "$password" ]]; then
-                    link="socks5://${username}:${password}@${SERVER_IP}:${port}#${AUTHOR_BLOG}"
+                    link="socks5://${username}:${password}@${SERVER_IP}:${port}#SOCKS5-${SERVER_IP}"
                 else
-                    link="socks5://${SERVER_IP}:${port}#${AUTHOR_BLOG}"
+                    link="socks5://${SERVER_IP}:${port}#SOCKS5-${SERVER_IP}"
                 fi
                 
                 if [[ -n "$link" ]]; then
@@ -484,21 +519,33 @@ regenerate_links_from_config() {
             "shadowtls")
                 # ShadowTLS 需要特殊处理
                 local password=$(echo "$inbound" | jq -r '.users[0].password // ""' 2>/dev/null)
-                local sni=$(echo "$inbound" | jq -r '.handshake.server // "www.bing.com"' 2>/dev/null)
+                local sni=$(echo "$inbound" | jq -r '.handshake.server // ""' 2>/dev/null)
+                
+                # 如果没有SNI，使用默认值
+                if [[ -z "$sni" ]]; then
+                    sni="${DEFAULT_SNI}"
+                fi
                 
                 if [[ -n "$password" ]]; then
                     # 简化处理，只标记存在
-                    local line="[ShadowTLS v3] ${SERVER_IP}:${port} (需要手动查看配置)\n"
+                    local line="[ShadowTLS v3] ${SERVER_IP}:${port} (SNI: ${sni}) (需要手动查看配置)\n"
                     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
                     SHADOWTLS_LINKS="${SHADOWTLS_LINKS}${line}\n"
                 fi
                 ;;
             "anytls")
                 local password=$(echo "$inbound" | jq -r '.users[0].password // ""' 2>/dev/null)
+                local sni=$(echo "$inbound" | jq -r '.tls.server_name // ""' 2>/dev/null)
+                
+                # 如果没有SNI，使用默认值
+                if [[ -z "$sni" ]]; then
+                    sni="${DEFAULT_SNI}"
+                fi
+                
                 if [[ -n "$password" ]]; then
                     # 使用 chrome 指纹，无需获取证书指纹
-                    local link_v2rayn="anytls://${password}@${SERVER_IP}:${port}?security=tls&fp=chrome&insecure=1&type=tcp#${AUTHOR_BLOG}"
-                    local line="[AnyTLS] ${SERVER_IP}:${port}\n${link_v2rayn}\n"
+                    local link_v2rayn="anytls://${password}@${SERVER_IP}:${port}?security=tls&fp=chrome&insecure=1&sni=${sni}&type=tcp#AnyTLS-${SERVER_IP}"
+                    local line="[AnyTLS] ${SERVER_IP}:${port} (SNI: ${sni})\n${link_v2rayn}\n"
                     
                     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
                     ANYTLS_LINKS="${ANYTLS_LINKS}${line}\n"
@@ -536,7 +583,7 @@ delete_single_node() {
     echo -e "${CYAN}当前节点列表:${NC}"
     for i in "${!INBOUND_TAGS[@]}"; do
         idx=$((i+1))
-        echo -e "  ${GREEN}[${idx}]${NC} 协议: ${INBOUND_PROTOS[$i]}, 端口: ${INBOUND_PORTS[$i]}, TAG: ${INBOUND_TAGS[$i]}"
+        echo -e "  ${GREEN}[${idx}]${NC} 协议: ${INBOUND_PROTOS[$i]}, 端口: ${INBOUND_PORTS[$i]}, SNI: ${INBOUND_SNIS[$i]}, TAG: ${INBOUND_TAGS[$i]}"
     done
     echo ""
     echo -e "${RED}警告: 删除节点后无法恢复！${NC}"
@@ -556,11 +603,13 @@ delete_single_node() {
     local tag="${INBOUND_TAGS[$index]}"
     local port="${INBOUND_PORTS[$index]}"
     local proto="${INBOUND_PROTOS[$index]}"
+    local sni="${INBOUND_SNIS[$index]}"
     
     echo ""
     echo -e "${YELLOW}确认删除以下节点:${NC}"
     echo -e "  协议: ${proto}"
     echo -e "  端口: ${port}"
+    echo -e "  SNI: ${sni}"
     echo -e "  TAG: ${tag}"
     echo ""
     
@@ -601,12 +650,14 @@ delete_single_node() {
         unset INBOUND_TAGS[$index]
         unset INBOUND_PORTS[$index]
         unset INBOUND_PROTOS[$index]
+        unset INBOUND_SNIS[$index]
         unset INBOUND_RELAY_FLAGS[$index]
         
         # 重建数组（移除空元素）
         INBOUND_TAGS=("${INBOUND_TAGS[@]}")
         INBOUND_PORTS=("${INBOUND_PORTS[@]}")
         INBOUND_PROTOS=("${INBOUND_PROTOS[@]}")
+        INBOUND_SNIS=("${INBOUND_SNIS[@]}")
         INBOUND_RELAY_FLAGS=("${INBOUND_RELAY_FLAGS[@]}")
         
         # 重新生成配置
@@ -616,7 +667,7 @@ delete_single_node() {
         # 重新生成链接
         regenerate_links_from_config
         
-        print_success "节点已删除: ${proto}:${port}"
+        print_success "节点已删除: ${proto}:${port} (SNI: ${sni})"
     else
         print_error "无法解析配置文件"
         return 1
@@ -647,6 +698,7 @@ delete_all_nodes() {
     INBOUND_TAGS=()
     INBOUND_PORTS=()
     INBOUND_PROTOS=()
+    INBOUND_SNIS=()
     INBOUND_RELAY_FLAGS=()
     
     # 创建空的配置文件
@@ -759,8 +811,12 @@ read_port_with_check() {
 setup_reality() {
     echo ""
     read_port_with_check 443
-    read -p "伪装域名 [itunes.apple.com]: " SNI
-    SNI=${SNI:-itunes.apple.com}
+    
+    # 询问伪装域名
+    echo -e "${YELLOW}请输入伪装域名（建议使用常见HTTPS网站域名）${NC}"
+    echo -e "${CYAN}例如: itunes.apple.com, www.bing.com, www.google.com${NC}"
+    read -p "伪装域名 [${DEFAULT_SNI}]: " SNI
+    SNI=${SNI:-${DEFAULT_SNI}}
     
     print_info "生成配置文件..."
     
@@ -789,19 +845,20 @@ setup_reality() {
     fi
     
     # V2rayN/NekoBox 格式链接
-    LINK="vless://${UUID}@${SERVER_IP}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI}&fp=chrome&pbk=${REALITY_PUBLIC}&sid=${SHORT_ID}&type=tcp#${AUTHOR_BLOG}"
+    LINK="vless://${UUID}@${SERVER_IP}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI}&fp=chrome&pbk=${REALITY_PUBLIC}&sid=${SHORT_ID}&type=tcp#Reality-${SERVER_IP}"
     
     PROTO="Reality"
     EXTRA_INFO="UUID: ${UUID}\nPublic Key: ${REALITY_PUBLIC}\nShort ID: ${SHORT_ID}\nSNI: ${SNI}"
-    local line="[Reality] ${SERVER_IP}:${PORT}\\n${LINK}\\n"
-    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\\n"
-    REALITY_LINKS="${REALITY_LINKS}${line}\\n"
+    local line="[Reality] ${SERVER_IP}:${PORT} (SNI: ${SNI})\n${LINK}\n"
+    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
+    REALITY_LINKS="${REALITY_LINKS}${line}\n"
     local tag="vless-in-${PORT}"
     INBOUND_TAGS+=("${tag}")
     INBOUND_PORTS+=("${PORT}")
     INBOUND_PROTOS+=("${PROTO}")
+    INBOUND_SNIS+=("${SNI}")
     INBOUND_RELAY_FLAGS+=(0)
-    print_success "Reality 配置完成"
+    print_success "Reality 配置完成 (SNI: ${SNI})"
     save_links_to_files
 }
 
@@ -809,8 +866,14 @@ setup_hysteria2() {
     echo ""
     read_port_with_check 443
     
-    print_info "生成自签证书..."
-    gen_cert
+    # 询问伪装域名
+    echo -e "${YELLOW}请输入伪装域名（建议使用常见HTTPS网站域名）${NC}"
+    echo -e "${CYAN}例如: itunes.apple.com, www.bing.com, www.google.com${NC}"
+    read -p "伪装域名 [${DEFAULT_SNI}]: " HY2_SNI
+    HY2_SNI=${HY2_SNI:-${DEFAULT_SNI}}
+    
+    print_info "为 ${HY2_SNI} 生成自签证书..."
+    gen_cert_for_sni "${HY2_SNI}"
     
     print_info "生成配置文件..."
     
@@ -823,8 +886,9 @@ setup_hysteria2() {
   "tls": {
     "enabled": true,
     "alpn": ["h3"],
-    "certificate_path": "'${CERT_DIR}'/cert.pem",
-    "key_path": "'${CERT_DIR}'/private.key"
+    "server_name": "'${HY2_SNI}'",
+    "certificate_path": "'${CERT_DIR}'/${HY2_SNI}/cert.pem",
+    "key_path": "'${CERT_DIR}'/${HY2_SNI}/private.key"
   }
 }'
     
@@ -835,18 +899,19 @@ setup_hysteria2() {
     fi
     
     # Hysteria2 链接格式（NekoBox支持）
-    LINK="hysteria2://${HY2_PASSWORD}@${SERVER_IP}:${PORT}?insecure=1&sni=${SELF_SIGNED_DOMAIN}#${AUTHOR_BLOG}"
+    LINK="hysteria2://${HY2_PASSWORD}@${SERVER_IP}:${PORT}?insecure=1&sni=${HY2_SNI}#Hysteria2-${SERVER_IP}"
     PROTO="Hysteria2"
-    EXTRA_INFO="密码: ${HY2_PASSWORD}\n证书: 自签证书(${SELF_SIGNED_DOMAIN})\n指纹: chrome"
-    local line="[Hysteria2] ${SERVER_IP}:${PORT}\\n${LINK}\\n"
-    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\\n"
-    HYSTERIA2_LINKS="${HYSTERIA2_LINKS}${line}\\n"
+    EXTRA_INFO="密码: ${HY2_PASSWORD}\n证书: 自签证书(${HY2_SNI})\nSNI: ${HY2_SNI}"
+    local line="[Hysteria2] ${SERVER_IP}:${PORT} (SNI: ${HY2_SNI})\n${LINK}\n"
+    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
+    HYSTERIA2_LINKS="${HYSTERIA2_LINKS}${line}\n"
     local tag="hy2-in-${PORT}"
     INBOUND_TAGS+=("${tag}")
     INBOUND_PORTS+=("${PORT}")
     INBOUND_PROTOS+=("${PROTO}")
+    INBOUND_SNIS+=("${HY2_SNI}")
     INBOUND_RELAY_FLAGS+=(0)
-    print_success "Hysteria2 配置完成"
+    print_success "Hysteria2 配置完成 (SNI: ${HY2_SNI})"
     save_links_to_files
 }
 
@@ -866,7 +931,7 @@ setup_socks5() {
   "listen_port": '${PORT}',
   "users": [{"username": "'${SOCKS_USER}'", "password": "'${SOCKS_PASS}'"}]
 }'
-        LINK="socks5://${SOCKS_USER}:${SOCKS_PASS}@${SERVER_IP}:${PORT}#${AUTHOR_BLOG}"
+        LINK="socks5://${SOCKS_USER}:${SOCKS_PASS}@${SERVER_IP}:${PORT}#SOCKS5-${SERVER_IP}"
         EXTRA_INFO="用户名: ${SOCKS_USER}\n密码: ${SOCKS_PASS}"
     else
         local inbound='{
@@ -875,7 +940,7 @@ setup_socks5() {
   "listen": "::",
   "listen_port": '${PORT}'
 }'
-        LINK="socks5://${SERVER_IP}:${PORT}#${AUTHOR_BLOG}"
+        LINK="socks5://${SERVER_IP}:${PORT}#SOCKS5-${SERVER_IP}"
         EXTRA_INFO="无认证"
     fi
     
@@ -885,9 +950,9 @@ setup_socks5() {
         INBOUNDS_JSON="${INBOUNDS_JSON},${inbound}"
     fi
     PROTO="SOCKS5"
-    local line="[SOCKS5] ${SERVER_IP}:${PORT}\\n${LINK}\\n"
-    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\\n"
-    SOCKS5_LINKS="${SOCKS5_LINKS}${line}\\n"
+    local line="[SOCKS5] ${SERVER_IP}:${PORT}\n${LINK}\n"
+    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
+    SOCKS5_LINKS="${SOCKS5_LINKS}${line}\n"
     local tag
     if [[ "$ENABLE_AUTH" =~ ^[Yy]$ ]]; then
         tag="socks-in-${PORT}"
@@ -897,6 +962,7 @@ setup_socks5() {
     INBOUND_TAGS+=("${tag}")
     INBOUND_PORTS+=("${PORT}")
     INBOUND_PROTOS+=("${PROTO}")
+    INBOUND_SNIS+=("")
     INBOUND_RELAY_FLAGS+=(0)
     print_success "SOCKS5 配置完成"
     save_links_to_files
@@ -905,8 +971,12 @@ setup_socks5() {
 setup_shadowtls() {
     echo ""
     read_port_with_check 443
-    read -p "伪装域名 [www.bing.com]: " SNI
-    SNI=${SNI:-www.bing.com}
+    
+    # 询问伪装域名
+    echo -e "${YELLOW}请输入伪装域名（建议使用常见HTTPS网站域名）${NC}"
+    echo -e "${CYAN}例如: itunes.apple.com, www.bing.com, www.google.com${NC}"
+    read -p "伪装域名 [${DEFAULT_SNI}]: " SHADOWTLS_SNI
+    SHADOWTLS_SNI=${SHADOWTLS_SNI:-${DEFAULT_SNI}}
     
     print_info "生成配置文件..."
     print_warning "ShadowTLS 通过伪装真实域名的TLS握手工作"
@@ -919,7 +989,7 @@ setup_shadowtls() {
   "version": 3,
   "users": [{"password": "'${SHADOWTLS_PASSWORD}'"}],
   "handshake": {
-    "server": "'${SNI}'",
+    "server": "'${SHADOWTLS_SNI}'",
     "server_port": 443
   },
   "strict_mode": true,
@@ -934,11 +1004,11 @@ setup_shadowtls() {
 }'
     
     local ss_userinfo=$(echo -n "2022-blake3-aes-128-gcm:${SS_PASSWORD}" | base64 -w0)
-    local plugin_json="{\"version\":\"3\",\"host\":\"${SNI}\",\"password\":\"${SHADOWTLS_PASSWORD}\"}"
+    local plugin_json="{\"version\":\"3\",\"host\":\"${SHADOWTLS_SNI}\",\"password\":\"${SHADOWTLS_PASSWORD}\"}"
     local plugin_base64=$(echo -n "$plugin_json" | base64 -w0)
     
     # ShadowTLS 链接格式（NekoBox支持）
-    LINK="ss://${ss_userinfo}@${SERVER_IP}:${PORT}?shadow-tls=${plugin_base64}#${AUTHOR_BLOG}"
+    LINK="ss://${ss_userinfo}@${SERVER_IP}:${PORT}?shadow-tls=${plugin_base64}#ShadowTLS-${SERVER_IP}"
     
     if [[ -z "$INBOUNDS_JSON" ]]; then
         INBOUNDS_JSON="$inbound"
@@ -946,16 +1016,17 @@ setup_shadowtls() {
         INBOUNDS_JSON="${INBOUNDS_JSON},${inbound}"
     fi
     PROTO="ShadowTLS v3"
-    local line="[ShadowTLS v3] ${SERVER_IP}:${PORT}\\n${LINK}\\n"
-    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\\n"
-    SHADOWTLS_LINKS="${SHADOWTLS_LINKS}${line}\\n"
-    EXTRA_INFO="Shadowsocks方法: 2022-blake3-aes-128-gcm\nShadowsocks密码: ${SS_PASSWORD}\nShadowTLS密码: ${SHADOWTLS_PASSWORD}\n伪装域名: ${SNI}"
+    local line="[ShadowTLS v3] ${SERVER_IP}:${PORT} (SNI: ${SHADOWTLS_SNI})\n${LINK}\n"
+    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
+    SHADOWTLS_LINKS="${SHADOWTLS_LINKS}${line}\n"
+    EXTRA_INFO="Shadowsocks方法: 2022-blake3-aes-128-gcm\nShadowsocks密码: ${SS_PASSWORD}\nShadowTLS密码: ${SHADOWTLS_PASSWORD}\n伪装域名: ${SHADOWTLS_SNI}"
     local tag="shadowtls-in-${PORT}"
     INBOUND_TAGS+=("${tag}")
     INBOUND_PORTS+=("${PORT}")
     INBOUND_PROTOS+=("${PROTO}")
+    INBOUND_SNIS+=("${SHADOWTLS_SNI}")
     INBOUND_RELAY_FLAGS+=(0)
-    print_success "ShadowTLS v3 配置完成"
+    print_success "ShadowTLS v3 配置完成 (SNI: ${SHADOWTLS_SNI})"
     save_links_to_files
 }
 
@@ -963,8 +1034,14 @@ setup_https() {
     echo ""
     read_port_with_check 443
     
-    print_info "生成自签证书..."
-    gen_cert
+    # 询问伪装域名
+    echo -e "${YELLOW}请输入伪装域名（建议使用常见HTTPS网站域名）${NC}"
+    echo -e "${CYAN}例如: itunes.apple.com, www.bing.com, www.google.com${NC}"
+    read -p "伪装域名 [${DEFAULT_SNI}]: " HTTPS_SNI
+    HTTPS_SNI=${HTTPS_SNI:-${DEFAULT_SNI}}
+    
+    print_info "为 ${HTTPS_SNI} 生成自签证书..."
+    gen_cert_for_sni "${HTTPS_SNI}"
     
     print_info "生成配置文件..."
     
@@ -976,30 +1053,31 @@ setup_https() {
   "users": [{"uuid": "'${UUID}'"}],
   "tls": {
     "enabled": true,
-    "server_name": "'${SELF_SIGNED_DOMAIN}'",
-    "certificate_path": "'${CERT_DIR}'/cert.pem",
-    "key_path": "'${CERT_DIR}'/private.key"
+    "server_name": "'${HTTPS_SNI}'",
+    "certificate_path": "'${CERT_DIR}'/${HTTPS_SNI}/cert.pem",
+    "key_path": "'${CERT_DIR}'/${HTTPS_SNI}/private.key"
   }
 }'
     
     # V2rayN/NekoBox 格式链接
-    LINK="vless://${UUID}@${SERVER_IP}:${PORT}?encryption=none&security=tls&sni=${SELF_SIGNED_DOMAIN}&type=tcp&allowInsecure=1#${AUTHOR_BLOG}"
+    LINK="vless://${UUID}@${SERVER_IP}:${PORT}?encryption=none&security=tls&sni=${HTTPS_SNI}&type=tcp&allowInsecure=1#HTTPS-${SERVER_IP}"
     if [[ -z "$INBOUNDS_JSON" ]]; then
         INBOUNDS_JSON="$inbound"
     else
         INBOUNDS_JSON="${INBOUNDS_JSON},${inbound}"
     fi
     PROTO="HTTPS"
-    EXTRA_INFO="UUID: ${UUID}\n证书: 自签证书(${SELF_SIGNED_DOMAIN})\n指纹: chrome"
-    local line="[HTTPS] ${SERVER_IP}:${PORT}\\n${LINK}\\n"
-    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\\n"
-    HTTPS_LINKS="${HTTPS_LINKS}${line}\\n"
+    EXTRA_INFO="UUID: ${UUID}\n证书: 自签证书(${HTTPS_SNI})\nSNI: ${HTTPS_SNI}"
+    local line="[HTTPS] ${SERVER_IP}:${PORT} (SNI: ${HTTPS_SNI})\n${LINK}\n"
+    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
+    HTTPS_LINKS="${HTTPS_LINKS}${line}\n"
     local tag="vless-tls-in-${PORT}"
     INBOUND_TAGS+=("${tag}")
     INBOUND_PORTS+=("${PORT}")
     INBOUND_PROTOS+=("${PROTO}")
+    INBOUND_SNIS+=("${HTTPS_SNI}")
     INBOUND_RELAY_FLAGS+=(0)
-    print_success "HTTPS 配置完成"
+    print_success "HTTPS 配置完成 (SNI: ${HTTPS_SNI})"
     save_links_to_files
 }
 
@@ -1007,8 +1085,14 @@ setup_anytls() {
     echo ""
     read_port_with_check 443
     
-    print_info "生成自签证书..."
-    gen_cert
+    # 询问伪装域名
+    echo -e "${YELLOW}请输入伪装域名（建议使用常见HTTPS网站域名）${NC}"
+    echo -e "${CYAN}例如: itunes.apple.com, www.bing.com, www.google.com${NC}"
+    read -p "伪装域名 [${DEFAULT_SNI}]: " ANYTLS_SNI
+    ANYTLS_SNI=${ANYTLS_SNI:-${DEFAULT_SNI}}
+    
+    print_info "为 ${ANYTLS_SNI} 生成自签证书..."
+    gen_cert_for_sni "${ANYTLS_SNI}"
     
     print_info "生成配置文件..."
     
@@ -1021,13 +1105,14 @@ setup_anytls() {
   "padding_scheme": [],
   "tls": {
     "enabled": true,
-    "certificate_path": "'${CERT_DIR}'/cert.pem",
-    "key_path": "'${CERT_DIR}'/private.key"
+    "server_name": "'${ANYTLS_SNI}'",
+    "certificate_path": "'${CERT_DIR}'/${ANYTLS_SNI}/cert.pem",
+    "key_path": "'${CERT_DIR}'/${ANYTLS_SNI}/private.key"
   }
 }'
     
     # V2rayN/NekoBox 格式链接
-    LINK="anytls://${ANYTLS_PASSWORD}@${SERVER_IP}:${PORT}?security=tls&fp=chrome&insecure=1&type=tcp#${AUTHOR_BLOG}"
+    LINK="anytls://${ANYTLS_PASSWORD}@${SERVER_IP}:${PORT}?security=tls&fp=chrome&insecure=1&sni=${ANYTLS_SNI}&type=tcp#AnyTLS-${SERVER_IP}"
     
     if [[ -z "$INBOUNDS_JSON" ]]; then
         INBOUNDS_JSON="$inbound"
@@ -1036,16 +1121,17 @@ setup_anytls() {
     fi
     PROTO="AnyTLS"
     
-    EXTRA_INFO="密码: ${ANYTLS_PASSWORD}\n证书: 自签证书(${SELF_SIGNED_DOMAIN})\n指纹: chrome"
-    local line="[AnyTLS] ${SERVER_IP}:${PORT}\\n${LINK}\\n"
-    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\\n"
-    ANYTLS_LINKS="${ANYTLS_LINKS}${line}\\n"
+    EXTRA_INFO="密码: ${ANYTLS_PASSWORD}\n自签证书: ${ANYTLS_SNI}\nSNI: ${ANYTLS_SNI}"
+    local line="[AnyTLS] ${SERVER_IP}:${PORT} (SNI: ${ANYTLS_SNI})\n${LINK}\n"
+    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
+    ANYTLS_LINKS="${ANYTLS_LINKS}${line}\n"
     local tag="anytls-in-${PORT}"
     INBOUND_TAGS+=("${tag}")
     INBOUND_PORTS+=("${PORT}")
     INBOUND_PROTOS+=("${PROTO}")
+    INBOUND_SNIS+=("${ANYTLS_SNI}")
     INBOUND_RELAY_FLAGS+=(0)
-    print_success "AnyTLS 配置完成"
+    print_success "AnyTLS 配置完成 (SNI: ${ANYTLS_SNI})"
     save_links_to_files
 }
 
@@ -1203,7 +1289,7 @@ setup_relay() {
                         idx=$((i+1))
                         status="直连"
                         [[ "${INBOUND_RELAY_FLAGS[$i]}" == "1" ]] && status="中转"
-                        echo -e "  ${GREEN}[${idx}]${NC} 协议: ${INBOUND_PROTOS[$i]}, 端口: ${INBOUND_PORTS[$i]}  → ${YELLOW}${status}${NC}"
+                        echo -e "  ${GREEN}[${idx}]${NC} 协议: ${INBOUND_PROTOS[$i]}, 端口: ${INBOUND_PORTS[$i]}, SNI: ${INBOUND_SNIS[$i]}  → ${YELLOW}${status}${NC}"
                     done
                     echo ""
                     echo -e "输入要切换中转状态的序号，多个用逗号分隔，例如: 1,3"
@@ -1306,22 +1392,25 @@ show_main_menu() {
 
     local outbound_desc
     if [[ "$OUTBOUND_TAG" == "relay" ]]; then
-        local relay_proto=""
-        local relay_port=""
+        # 查找所有走中转的节点
+        local relay_nodes=()
         if [[ ${#INBOUND_RELAY_FLAGS[@]} -gt 0 ]]; then
             for i in "${!INBOUND_RELAY_FLAGS[@]}"; do
                 if [[ "${INBOUND_RELAY_FLAGS[$i]}" == "1" ]]; then
-                    relay_proto="${INBOUND_PROTOS[$i]}"
-                    relay_port="${INBOUND_PORTS[$i]}"
-                    break
+                    relay_nodes+=("${INBOUND_PROTOS[$i]}:${INBOUND_PORTS[$i]}")
                 fi
             done
         fi
 
-        if [[ -n "$relay_proto" && -n "$relay_port" ]]; then
-            outbound_desc="中转 (${relay_proto}:${relay_port})"
-        else
+        if [[ ${#relay_nodes[@]} -gt 0 ]]; then
+            # 如果有走中转的节点，显示协议和端口
             outbound_desc="中转"
+            for node in "${relay_nodes[@]}"; do
+                outbound_desc="${outbound_desc} ${node}"
+            done
+        else
+            # 如果没有节点走中转，但仍然配置了中转，显示"中转(无节点)"
+            outbound_desc="中转(无节点)"
         fi
     else
         outbound_desc="直连"
@@ -1623,6 +1712,7 @@ show_result() {
     echo -e "  协议: ${GREEN}${PROTO}${NC}"
     echo -e "  IP: ${GREEN}${SERVER_IP}${NC}"
     echo -e "  端口: ${GREEN}${PORT}${NC}"
+    echo -e "  SNI: ${GREEN}${SNI:-${HY2_SNI:-${SHADOWTLS_SNI:-${HTTPS_SNI:-${ANYTLS_SNI:-未设置}}}}${NC}"
     echo -e "  出站: ${GREEN}${OUTBOUND_TAG}${NC}"
     echo ""
     
@@ -1678,18 +1768,6 @@ show_result() {
     fi
     
     echo -e "${CYAN}───────────────────────────────────────────────────────${NC}"
-    echo ""
-    echo -e "${YELLOW}📱 使用方法:${NC}"
-    echo -e "  1. 复制上面的链接"
-    echo -e "  2. 打开 V2rayN 或 NekoBox 客户端"
-    echo -e "  3. 从剪贴板导入配置"
-    echo ""
-    echo -e "${YELLOW}⚙️  服务管理:${NC}"
-    echo -e "  查看状态: ${CYAN}systemctl status sing-box${NC}"
-    echo -e "  查看日志: ${CYAN}journalctl -u sing-box -f${NC}"
-    echo -e "  重启服务: ${CYAN}systemctl restart sing-box${NC}"
-    echo -e "  停止服务: ${CYAN}systemctl stop sing-box${NC}"
-    echo ""
 }
 
 config_and_view_menu() {
@@ -1885,9 +1963,9 @@ setup_sb_shortcut() {
         return
     fi
 
-    cat > /usr/local/bin/sb << EOSB
+    cat > /usr/local/bin/sb << 'EOSB'
 #!/bin/bash
-bash "${SCRIPT_PATH}" "\$@"
+bash "${SCRIPT_PATH}" "$@"
 EOSB
     chmod +x /usr/local/bin/sb
     print_success "已创建快捷命令: sb （任意位置输入 sb 即可重新进入脚本）"
@@ -1897,7 +1975,6 @@ main() {
     [[ $EUID -ne 0 ]] && { print_error "需要 root 权限"; exit 1; }
     
     detect_system
-    print_success "系统: ${OS} (${ARCH})"
     
     install_singbox
     mkdir -p /etc/sing-box
