@@ -76,12 +76,14 @@ show_banner() {
 
 detect_system() {
     [[ -f /etc/os-release ]] && . /etc/os-release || { print_error "无法检测系统"; exit 1; }
+    OS="${NAME}"
     ARCH=$(uname -m)
     case $ARCH in
         x86_64) ARCH="amd64" ;;
         aarch64) ARCH="arm64" ;;
         *) print_error "不支持的架构: $ARCH"; exit 1 ;;
     esac
+    print_success "系统: ${OS} (${ARCH})"
 }
 
 install_singbox() {
@@ -1973,7 +1975,6 @@ main() {
     [[ $EUID -ne 0 ]] && { print_error "需要 root 权限"; exit 1; }
     
     detect_system
-    print_success "系统: ${OS} (${ARCH})"
     
     install_singbox
     mkdir -p /etc/sing-box
