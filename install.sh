@@ -88,7 +88,7 @@ detect_system() {
             exit 1
             ;;
     esac
-    print_success "系统: $os_name ($arch)"
+    print_success "系统: $os_name ($arch)" >&2
     echo "$arch"
 }
 
