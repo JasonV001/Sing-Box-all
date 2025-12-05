@@ -69,6 +69,45 @@ print_success() { echo -e "${GREEN}[✓]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[!]${NC} $1"; }
 print_error() { echo -e "${RED}[✗]${NC} $1"; }
 
+# 验证文件完整性
+verify_file_integrity() {
+    local file="$1"
+    local expected_checksum="$2"
+    
+    if [[ -z "$file" ]] || [[ ! -f "$file" ]]; then
+        print_error "文件不存在: $file"
+        return 1
+    fi
+    
+    # 如果没有提供校验和，跳过验证
+    if [[ -z "$expected_checksum" ]]; then
+        print_warning "未提供校验和，跳过完整性验证"
+        return 0
+    fi
+    
+    # 计算文件的SHA256校验和
+    local actual_checksum
+    if command -v sha256sum &>/dev/null; then
+        actual_checksum=$(sha256sum "$file" | awk '{print $1}')
+    elif command -v shasum &>/dev/null; then
+        actual_checksum=$(shasum -a 256 "$file" | awk '{print $1}')
+    else
+        print_warning "未找到sha256sum或shasum命令，跳过完整性验证"
+        return 0
+    fi
+    
+    # 比较校验和
+    if [[ "$actual_checksum" == "$expected_checksum" ]]; then
+        print_success "文件完整性验证通过"
+        return 0
+    else
+        print_error "文件完整性验证失败"
+        print_error "期望: $expected_checksum"
+        print_error "实际: $actual_checksum"
+        return 1
+    fi
+}
+
 show_banner() {
     clear
     echo ""
@@ -89,38 +128,114 @@ detect_system() {
 install_singbox() {
     print_info "检查依赖和 sing-box..."
     
-    # 修改：只安装必需的依赖
+    # 安装必需的依赖
     if ! command -v jq &>/dev/null || ! command -v openssl &>/dev/null; then
         print_info "安装依赖包..."
-        apt-get update -qq && apt-get install -y curl wget jq openssl uuid-runtime >/dev/null 2>&1
+        if command -v apt-get &>/dev/null; then
+            apt-get update -qq && apt-get install -y curl wget jq openssl uuid-runtime >/dev/null 2>&1
+        elif command -v yum &>/dev/null; then
+            yum install -y curl wget jq openssl util-linux >/dev/null 2>&1
+        else
+            print_error "不支持的包管理器"
+            return 1
+        fi
     fi
     
+    # 检查是否已安装
     if command -v sing-box &>/dev/null; then
-        local version=$(sing-box version 2>&1 | grep -oP 'sing-box version \K[0-9.]+' || echo "unknown")
+        local version
+        version=$(sing-box version 2>&1 | grep -oP 'sing-box version \K[0-9.]+' || echo "unknown")
         print_success "sing-box 已安装 (版本: ${version})"
         return 0
     fi
     
     print_info "下载并安装 sing-box..."
-    LATEST=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r '.tag_name' | sed 's/v//')
-    [[ -z "$LATEST" ]] && LATEST="1.12.0"
+    
+    # 获取最新版本号（带重试）
+    local LATEST
+    local retry=0
+    local max_retry=3
+    
+    while [[ $retry -lt $max_retry ]]; do
+        LATEST=$(curl -s --connect-timeout 10 https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r '.tag_name' | sed 's/v//')
+        if [[ -n "$LATEST" ]] && [[ "$LATEST" != "null" ]]; then
+            break
+        fi
+        retry=$((retry + 1))
+        print_warning "获取版本信息失败，重试 ${retry}/${max_retry}..."
+        sleep 2
+    done
+    
+    # 如果获取失败，使用默认版本
+    if [[ -z "$LATEST" ]] || [[ "$LATEST" == "null" ]]; then
+        LATEST="1.12.0"
+        print_warning "无法获取最新版本，使用默认版本: ${LATEST}"
+    fi
     
     print_info "目标版本: ${LATEST}"
     
-    wget -q --show-progress -O /tmp/sb.tar.gz "https://github.com/SagerNet/sing-box/releases/download/v${LATEST}/sing-box-${LATEST}-linux-${ARCH}.tar.gz" 2>&1
+    # 下载文件（带重试）
+    local download_url="https://github.com/SagerNet/sing-box/releases/download/v${LATEST}/sing-box-${LATEST}-linux-${ARCH}.tar.gz"
+    local download_file="/tmp/sb.tar.gz"
     
-    tar -xzf /tmp/sb.tar.gz -C /tmp
-    install -Dm755 /tmp/sing-box-${LATEST}-linux-${ARCH}/sing-box ${INSTALL_DIR}/sing-box
+    retry=0
+    while [[ $retry -lt $max_retry ]]; do
+        if wget -q --show-progress --timeout=30 -O "$download_file" "$download_url" 2>&1; then
+            # 验证下载的文件不为空
+            if [[ -f "$download_file" ]] && [[ -s "$download_file" ]]; then
+                print_success "下载完成"
+                break
+            else
+                print_warning "下载的文件为空"
+            fi
+        fi
+        retry=$((retry + 1))
+        print_warning "下载失败，重试 ${retry}/${max_retry}..."
+        rm -f "$download_file"
+        sleep 2
+    done
+    
+    # 检查下载是否成功
+    if [[ ! -f "$download_file" ]] || [[ ! -s "$download_file" ]]; then
+        print_error "下载失败"
+        return 1
+    fi
+    
+    # 解压并安装
+    print_info "解压并安装..."
+    if ! tar -xzf "$download_file" -C /tmp 2>/dev/null; then
+        print_error "解压失败，文件可能已损坏"
+        rm -f "$download_file"
+        return 1
+    fi
+    
+    # 安装二进制文件
+    if [[ -f "/tmp/sing-box-${LATEST}-linux-${ARCH}/sing-box" ]]; then
+        install -Dm755 "/tmp/sing-box-${LATEST}-linux-${ARCH}/sing-box" "${INSTALL_DIR}/sing-box"
+    else
+        print_error "未找到sing-box二进制文件"
+        rm -rf /tmp/sb.tar.gz /tmp/sing-box-*
+        return 1
+    fi
+    
+    # 清理临时文件
     rm -rf /tmp/sb.tar.gz /tmp/sing-box-*
     
-    cat > /etc/systemd/system/sing-box.service << EOFSVC
+    # 验证安装
+    if ! command -v sing-box &>/dev/null; then
+        print_error "sing-box安装失败"
+        return 1
+    fi
+    
+    # 创建systemd服务
+    cat > /etc/systemd/system/sing-box.service << 'EOFSVC'
 [Unit]
 Description=sing-box service
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=${INSTALL_DIR}/sing-box run -c ${CONFIG_FILE}
+ExecStart=/usr/local/bin/sing-box run -c /etc/sing-box/config.json
 Restart=on-failure
 RestartSec=10s
 LimitNOFILE=infinity
@@ -160,18 +275,18 @@ gen_keys() {
         return 0
     fi
     
-    # 生成新的密钥
+    # 生成新的密钥（所有密码使用十六进制格式）
     KEYS=$(${INSTALL_DIR}/sing-box generate reality-keypair 2>/dev/null)
     REALITY_PRIVATE=$(echo "$KEYS" | grep "PrivateKey" | awk '{print $2}')
     REALITY_PUBLIC=$(echo "$KEYS" | grep "PublicKey" | awk '{print $2}')
     UUID=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen)
     SHORT_ID=$(openssl rand -hex 8)
-    HY2_PASSWORD=$(openssl rand -base64 16)
-    SS_PASSWORD=$(openssl rand -base64 32)
+    HY2_PASSWORD=$(openssl rand -hex 16)
+    SS_PASSWORD=$(openssl rand -hex 32)
     SHADOWTLS_PASSWORD=$(openssl rand -hex 16)
-    ANYTLS_PASSWORD=$(openssl rand -base64 16)
+    ANYTLS_PASSWORD=$(openssl rand -hex 16)
     SOCKS_USER="user_$(openssl rand -hex 4)"
-    SOCKS_PASS=$(openssl rand -base64 12)
+    SOCKS_PASS=$(openssl rand -hex 12)
     
     # 保存密钥到文件
     save_keys_to_file
@@ -181,10 +296,17 @@ gen_keys() {
 
 # 保存密钥到文件
 save_keys_to_file() {
-    mkdir -p "$(dirname "${KEY_FILE}")"
+    local key_dir
+    key_dir="$(dirname "${KEY_FILE}")"
     
+    # 创建目录并设置严格权限
+    mkdir -p "${key_dir}"
+    chmod 700 "${key_dir}"
+    
+    # 创建密钥文件
     cat > "${KEY_FILE}" << EOF
 # Sing-box 密钥文件
+# 警告：此文件包含敏感信息，请勿分享
 UUID="${UUID}"
 REALITY_PRIVATE="${REALITY_PRIVATE}"
 REALITY_PUBLIC="${REALITY_PUBLIC}"
@@ -197,8 +319,11 @@ SOCKS_USER="${SOCKS_USER}"
 SOCKS_PASS="${SOCKS_PASS}"
 EOF
     
+    # 设置严格的文件权限（仅root可读写）
     chmod 600 "${KEY_FILE}"
-    print_success "密钥已保存到 ${KEY_FILE}"
+    chown root:root "${KEY_FILE}" 2>/dev/null || true
+    
+    print_success "密钥已保存到 ${KEY_FILE}（权限：600）"
 }
 
 # 保存链接到文件
@@ -777,33 +902,84 @@ get_ip() {
 
 check_port_in_use() {
     local port="$1"
-
-    if command -v ss &>/dev/null; then
-        ss -tuln | awk '{print $5}' | grep -E "[:.]${port}$" >/dev/null 2>&1 && return 0 || return 1
-    elif command -v netstat &>/dev/null; then
-        netstat -tuln | awk '{print $4}' | grep -E "[:.]${port}$" >/dev/null 2>&1 && return 0 || return 1
-    else
-        # 无法检测时，默认认为未占用
+    
+    # 参数验证
+    if [[ -z "$port" ]] || ! [[ "$port" =~ ^[0-9]+$ ]]; then
+        print_error "端口参数无效: $port"
         return 1
+    fi
+    
+    # 使用ss命令检查（推荐）
+    if command -v ss &>/dev/null; then
+        if ss -tuln | awk '{print $5}' | grep -qE "[:.]${port}$"; then
+            return 0  # 端口被占用
+        else
+            return 1  # 端口未被占用
+        fi
+    # 使用netstat命令检查（备用）
+    elif command -v netstat &>/dev/null; then
+        if netstat -tuln | awk '{print $4}' | grep -qE "[:.]${port}$"; then
+            return 0  # 端口被占用
+        else
+            return 1  # 端口未被占用
+        fi
+    # 使用lsof命令检查（第三备用）
+    elif command -v lsof &>/dev/null; then
+        if lsof -i :"${port}" -sTCP:LISTEN -t >/dev/null 2>&1; then
+            return 0  # 端口被占用
+        else
+            return 1  # 端口未被占用
+        fi
+    else
+        # 无法检测时，警告用户
+        print_warning "无法检测端口占用情况（缺少ss/netstat/lsof命令）"
+        return 1  # 假设未占用
     fi
 }
 
 read_port_with_check() {
     local default_port="$1"
+    local max_attempts=5
+    local attempt=0
+    
+    # 验证默认端口
+    if [[ -z "$default_port" ]] || ! [[ "$default_port" =~ ^[0-9]+$ ]]; then
+        default_port=443
+    fi
+    
     while true; do
+        attempt=$((attempt + 1))
+        
+        # 超过最大尝试次数
+        if [[ $attempt -gt $max_attempts ]]; then
+            print_error "超过最大尝试次数，使用随机端口"
+            PORT=$((RANDOM % 10000 + 10000))
+            print_info "随机端口: ${PORT}"
+            break
+        fi
+        
         read -p "监听端口 [${default_port}]: " PORT
         PORT=${PORT:-${default_port}}
-
-        if ! [[ "$PORT" =~ ^[0-9]+$ ]] || ((PORT < 1 || PORT > 65535)); then
-            print_error "端口无效，请输入 1-65535 之间的数字"
+        
+        # 验证端口格式
+        if ! [[ "$PORT" =~ ^[0-9]+$ ]]; then
+            print_error "端口格式无效，请输入纯数字"
             continue
         fi
-
+        
+        # 验证端口范围
+        if ((PORT < 1 || PORT > 65535)); then
+            print_error "端口范围无效，请输入 1-65535 之间的数字"
+            continue
+        fi
+        
+        # 检查端口是否被占用
         if check_port_in_use "$PORT"; then
-            print_warning "端口 ${PORT} 已被占用，请重新输入"
+            print_warning "端口 ${PORT} 已被占用，请选择其他端口"
             continue
         fi
-
+        
+        print_success "端口 ${PORT} 可用"
         break
     done
 }
@@ -1957,16 +2133,26 @@ config_and_view_menu() {
 
 setup_sb_shortcut() {
     print_info "创建快捷命令 sb..."
+    
     # 仅当脚本路径是实际文件时才创建快捷命令
     if [[ ! -f "${SCRIPT_PATH}" ]]; then
         print_warning "当前脚本并非磁盘文件，跳过创建 sb（请从本地脚本文件运行后再试）"
         return
     fi
-
+    
+    # 创建快捷命令脚本
     cat > /usr/local/bin/sb << 'EOSB'
 #!/bin/bash
-bash "${SCRIPT_PATH}" "$@"
+# Sing-box 管理脚本快捷命令
+SCRIPT_PATH="/root/tiaoshi.sh"
+if [[ -f "${SCRIPT_PATH}" ]]; then
+    bash "${SCRIPT_PATH}" "$@"
+else
+    echo "错误：脚本文件不存在: ${SCRIPT_PATH}"
+    exit 1
+fi
 EOSB
+    
     chmod +x /usr/local/bin/sb
     print_success "已创建快捷命令: sb （任意位置输入 sb 即可重新进入脚本）"
 }
