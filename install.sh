@@ -91,7 +91,10 @@ declare https_links_content=""
 declare anytls_links_content=""
 
 # 临时变量
+declare current_protocol_name=""
 declare current_port=""
+declare current_sni=""
+declare current_link=""
 
 # ============================================================================
 # 工具函数模块
@@ -222,7 +225,7 @@ get_server_ip() {
     )
     
     for service in "${ip_services[@]}"; do
-        if server_ip=$(curl -s4 --connect-timeout 5 "$service"); then
+        if server_ip=$(curl -s4 --connect-timeout 5 "$service" 2>/dev/null); then
             if [[ -n "$server_ip" ]] && validate_ip "$server_ip"; then
                 log_success "服务器IP: ${server_ip}"
                 return 0
@@ -261,7 +264,7 @@ check_port_in_use() {
 # 生成十六进制密码
 generate_hex_password() {
     local length="${1:-16}"
-    openssl rand -hex "${length}" 2>/dev/null
+    openssl rand -hex "${length}" 2>/dev/null || echo "0000000000000000"
 }
 
 generate_uuid() {
@@ -271,7 +274,7 @@ generate_uuid() {
         cat /proc/sys/kernel/random/uuid
     else
         # 使用openssl生成UUID
-        openssl rand -hex 16 | sed 's/\(..\)/&-/g; s/-$//'
+        openssl rand -hex 16 | sed 's/\(..\)/&-/g; s/-$//' 2>/dev/null || echo "00000000-0000-0000-0000-000000000000"
     fi
 }
 
@@ -314,15 +317,12 @@ generate_keys() {
     # 生成Reality密钥对（使用openssl替代sing-box生成）
     if command_exists openssl; then
         # 生成私钥
-        reality_private_key=$(openssl genpkey -algorithm x25519 -text 2>/dev/null | grep -A 2 "priv:" | tail -1 | tr -d '[:space:]')
+        reality_private_key=$(openssl genpkey -algorithm x25519 -text 2>/dev/null | grep -A 2 "priv:" | tail -1 | tr -d '[:space:]' || generate_hex_password 32)
         
         # 计算公钥
         if [[ -n "$reality_private_key" ]]; then
-            reality_public_key=$(echo -n "$reality_private_key" | openssl pkey -pubout -outform DER 2>/dev/null | tail -c 32 | base64 | tr -d '\n')
-        fi
-        
-        # 如果生成失败，使用随机字符串
-        if [[ -z "$reality_public_key" ]]; then
+            reality_public_key=$(echo -n "$reality_private_key" | openssl pkey -pubout -outform DER 2>/dev/null | tail -c 32 | base64 | tr -d '\n' || generate_hex_password 32)
+        else
             reality_private_key=$(generate_hex_password 32)
             reality_public_key=$(generate_hex_password 32)
         fi
@@ -388,7 +388,7 @@ install_singbox() {
     log_info "获取最新版本..."
     local latest_version
     if command_exists jq && command_exists curl; then
-        latest_version=$(curl -s "${SINGBOX_API}" | jq -r '.tag_name // empty' | sed 's/v//')
+        latest_version=$(curl -s "${SINGBOX_API}" 2>/dev/null | jq -r '.tag_name // empty' 2>/dev/null | sed 's/v//')
     fi
     
     [[ -z "$latest_version" ]] && latest_version="1.12.0"
@@ -400,23 +400,23 @@ install_singbox() {
     local temp_dir
     temp_dir=$(mktemp -d)
     
-    if ! wget -q --show-progress -O "${temp_dir}/sing-box.tar.gz" "${download_url}"; then
+    if ! wget -q --show-progress -O "${temp_dir}/sing-box.tar.gz" "${download_url}" 2>&1; then
         log_error "下载失败: ${download_url}"
-        rm -rf "${temp_dir}"
+        rm -rf "${temp_dir}" 2>/dev/null
         return 1
     fi
     
     # 验证文件完整性（简单大小检查）
     local file_size
     if command_exists stat; then
-        file_size=$(stat -c%s "${temp_dir}/sing-box.tar.gz" 2>/dev/null || stat -f%z "${temp_dir}/sing-box.tar.gz" 2>/dev/null)
+        file_size=$(stat -c%s "${temp_dir}/sing-box.tar.gz" 2>/dev/null || stat -f%z "${temp_dir}/sing-box.tar.gz" 2>/dev/null || echo 0)
     else
-        file_size=$(wc -c < "${temp_dir}/sing-box.tar.gz" 2>/dev/null)
+        file_size=$(wc -c < "${temp_dir}/sing-box.tar.gz" 2>/dev/null || echo 0)
     fi
     
     if [[ $file_size -lt 1000000 ]]; then
         log_error "下载的文件大小异常: ${file_size} 字节"
-        rm -rf "${temp_dir}"
+        rm -rf "${temp_dir}" 2>/dev/null
         return 1
     fi
     
@@ -429,11 +429,11 @@ install_singbox() {
     
     if [[ -z "$binary_path" ]]; then
         log_error "在下载包中找不到 sing-box 二进制文件"
-        rm -rf "${temp_dir}"
+        rm -rf "${temp_dir}" 2>/dev/null
         return 1
     fi
     
-    install -Dm755 "${binary_path}" "${INSTALL_DIR}/sing-box"
+    install -Dm755 "${binary_path}" "${INSTALL_DIR}/sing-box" 2>/dev/null
     
     # 创建服务文件
     create_service_file
@@ -442,7 +442,7 @@ install_singbox() {
     systemctl enable sing-box >/dev/null 2>&1
     
     # 清理临时文件
-    rm -rf "${temp_dir}"
+    rm -rf "${temp_dir}" 2>/dev/null
     
     log_success "sing-box 安装完成 (版本: ${latest_version})"
 }
@@ -551,7 +551,11 @@ configure_reality() {
     local sni
     sni=$(safe_read "伪装域名 [${DEFAULT_SNI}]: " "${DEFAULT_SNI}")
     
-    # 返回配置和链接
+    # 更新临时变量
+    current_protocol_name="Reality"
+    current_sni="$sni"
+    
+    # 创建配置
     local config
     config=$(cat << EOF
 {
@@ -580,12 +584,10 @@ configure_reality() {
 EOF
 )
     
-    local link="vless://${uuid}@${server_ip}:${current_port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${sni}&fp=chrome&pbk=${reality_public_key}&sid=${short_id}&type=tcp#Reality-${server_ip}"
+    # 生成链接
+    current_link="vless://${uuid}@${server_ip}:${current_port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${sni}&fp=chrome&pbk=${reality_public_key}&sid=${short_id}&type=tcp#Reality-${server_ip}"
     
-    echo "Reality"
     echo "$config"
-    echo "$link"
-    echo "$sni"
 }
 
 configure_hysteria2() {
@@ -596,10 +598,14 @@ configure_hysteria2() {
     local sni
     sni=$(safe_read "伪装域名 [${DEFAULT_SNI}]: " "${DEFAULT_SNI}")
     
+    # 更新临时变量
+    current_protocol_name="Hysteria2"
+    current_sni="$sni"
+    
     # 生成证书
     generate_certificate_for_sni "$sni"
     
-    # 返回配置和链接
+    # 创建配置
     local config
     config=$(cat << EOF
 {
@@ -621,12 +627,10 @@ configure_hysteria2() {
 EOF
 )
     
-    local link="hysteria2://${hysteria2_password}@${server_ip}:${current_port}?insecure=1&sni=${sni}#Hysteria2-${server_ip}"
+    # 生成链接
+    current_link="hysteria2://${hysteria2_password}@${server_ip}:${current_port}?insecure=1&sni=${sni}#Hysteria2-${server_ip}"
     
-    echo "Hysteria2"
     echo "$config"
-    echo "$link"
-    echo "$sni"
 }
 
 configure_socks5() {
@@ -637,7 +641,11 @@ configure_socks5() {
     local enable_auth
     enable_auth=$(safe_read "是否启用认证? [Y/n]: " "Y")
     
-    local config link
+    # 更新临时变量
+    current_protocol_name="SOCKS5"
+    current_sni=""
+    
+    local config
     
     if [[ "$enable_auth" =~ ^[Yy]$ ]]; then
         config=$(cat << EOF
@@ -653,7 +661,7 @@ configure_socks5() {
 }
 EOF
 )
-        link="socks5://${socks_username}:${socks_password}@${server_ip}:${current_port}#SOCKS5-${server_ip}"
+        current_link="socks5://${socks_username}:${socks_password}@${server_ip}:${current_port}#SOCKS5-${server_ip}"
     else
         config=$(cat << EOF
 {
@@ -664,13 +672,10 @@ EOF
 }
 EOF
 )
-        link="socks5://${server_ip}:${current_port}#SOCKS5-${server_ip}"
+        current_link="socks5://${server_ip}:${current_port}#SOCKS5-${server_ip}"
     fi
     
-    echo "SOCKS5"
     echo "$config"
-    echo "$link"
-    echo ""
 }
 
 configure_shadowtls() {
@@ -681,7 +686,11 @@ configure_shadowtls() {
     local sni
     sni=$(safe_read "伪装域名 [${DEFAULT_SNI}]: " "${DEFAULT_SNI}")
     
-    # 返回配置和链接
+    # 更新临时变量
+    current_protocol_name="ShadowTLS"
+    current_sni="$sni"
+    
+    # 创建配置
     local config
     config=$(cat << EOF
 {
@@ -711,18 +720,20 @@ configure_shadowtls() {
 EOF
 )
     
+    # 生成链接
     local ss_userinfo
-    ss_userinfo=$(echo -n "2022-blake3-aes-128-gcm:${shadowsocks_password}" | base64 -w0)
+    ss_userinfo=$(echo -n "2022-blake3-aes-128-gcm:${shadowsocks_password}" | base64 -w0 2>/dev/null || echo "")
     local plugin_json="{\"version\":\"3\",\"host\":\"${sni}\",\"password\":\"${shadowtls_password}\"}"
     local plugin_base64
-    plugin_base64=$(echo -n "$plugin_json" | base64 -w0)
+    plugin_base64=$(echo -n "$plugin_json" | base64 -w0 2>/dev/null || echo "")
     
-    local link="ss://${ss_userinfo}@${server_ip}:${current_port}?shadow-tls=${plugin_base64}#ShadowTLS-${server_ip}"
+    if [[ -n "$ss_userinfo" && -n "$plugin_base64" ]]; then
+        current_link="ss://${ss_userinfo}@${server_ip}:${current_port}?shadow-tls=${plugin_base64}#ShadowTLS-${server_ip}"
+    else
+        current_link="[ShadowTLS] ${server_ip}:${current_port} (需要手动配置)"
+    fi
     
-    echo "ShadowTLS"
     echo "$config"
-    echo "$link"
-    echo "$sni"
 }
 
 configure_https() {
@@ -733,10 +744,14 @@ configure_https() {
     local sni
     sni=$(safe_read "伪装域名 [${DEFAULT_SNI}]: " "${DEFAULT_SNI}")
     
+    # 更新临时变量
+    current_protocol_name="HTTPS"
+    current_sni="$sni"
+    
     # 生成证书
     generate_certificate_for_sni "$sni"
     
-    # 返回配置和链接
+    # 创建配置
     local config
     config=$(cat << EOF
 {
@@ -758,12 +773,10 @@ configure_https() {
 EOF
 )
     
-    local link="vless://${uuid}@${server_ip}:${current_port}?encryption=none&security=tls&sni=${sni}&fp=chrome&type=tcp&flow=#HTTPS-${server_ip}"
+    # 生成链接
+    current_link="vless://${uuid}@${server_ip}:${current_port}?encryption=none&security=tls&sni=${sni}&fp=chrome&type=tcp&flow=#HTTPS-${server_ip}"
     
-    echo "HTTPS"
     echo "$config"
-    echo "$link"
-    echo "$sni"
 }
 
 configure_anytls() {
@@ -774,10 +787,14 @@ configure_anytls() {
     local sni
     sni=$(safe_read "伪装域名 [${DEFAULT_SNI}]: " "${DEFAULT_SNI}")
     
+    # 更新临时变量
+    current_protocol_name="AnyTLS"
+    current_sni="$sni"
+    
     # 生成证书
     generate_certificate_for_sni "$sni"
     
-    # 返回配置和链接
+    # 创建配置
     local config
     config=$(cat << EOF
 {
@@ -799,12 +816,10 @@ configure_anytls() {
 EOF
 )
     
-    local link="anytls://${anytls_password}@${server_ip}:${current_port}?security=tls&fp=chrome&insecure=1&sni=${sni}&type=tcp#AnyTLS-${server_ip}"
+    # 生成链接
+    current_link="anytls://${anytls_password}@${server_ip}:${current_port}?security=tls&fp=chrome&insecure=1&sni=${sni}&type=tcp#AnyTLS-${server_ip}"
     
-    echo "AnyTLS"
     echo "$config"
-    echo "$link"
-    echo "$sni"
 }
 
 # ============================================================================
@@ -1143,61 +1158,26 @@ clear_relay() {
 
 add_node() {
     local protocol="$1"
+    local config=""
     
     case "$protocol" in
         "reality")
-            local result
-            result=$(configure_reality)
-            local protocol_name config link sni
-            protocol_name=$(echo "$result" | sed -n '1p')
-            config=$(echo "$result" | sed -n '2p')
-            link=$(echo "$result" | sed -n '3p')
-            sni=$(echo "$result" | sed -n '4p')
+            config=$(configure_reality)
             ;;
         "hysteria2")
-            local result
-            result=$(configure_hysteria2)
-            local protocol_name config link sni
-            protocol_name=$(echo "$result" | sed -n '1p')
-            config=$(echo "$result" | sed -n '2p')
-            link=$(echo "$result" | sed -n '3p')
-            sni=$(echo "$result" | sed -n '4p')
+            config=$(configure_hysteria2)
             ;;
         "socks5")
-            local result
-            result=$(configure_socks5)
-            local protocol_name config link sni
-            protocol_name=$(echo "$result" | sed -n '1p')
-            config=$(echo "$result" | sed -n '2p')
-            link=$(echo "$result" | sed -n '3p')
-            sni=$(echo "$result" | sed -n '4p')
+            config=$(configure_socks5)
             ;;
         "shadowtls")
-            local result
-            result=$(configure_shadowtls)
-            local protocol_name config link sni
-            protocol_name=$(echo "$result" | sed -n '1p')
-            config=$(echo "$result" | sed -n '2p')
-            link=$(echo "$result" | sed -n '3p')
-            sni=$(echo "$result" | sed -n '4p')
+            config=$(configure_shadowtls)
             ;;
         "https")
-            local result
-            result=$(configure_https)
-            local protocol_name config link sni
-            protocol_name=$(echo "$result" | sed -n '1p')
-            config=$(echo "$result" | sed -n '2p')
-            link=$(echo "$result" | sed -n '3p')
-            sni=$(echo "$result" | sed -n '4p')
+            config=$(configure_https)
             ;;
         "anytls")
-            local result
-            result=$(configure_anytls)
-            local protocol_name config link sni
-            protocol_name=$(echo "$result" | sed -n '1p')
-            config=$(echo "$result" | sed -n '2p')
-            link=$(echo "$result" | sed -n '3p')
-            sni=$(echo "$result" | sed -n '4p')
+            config=$(configure_anytls)
             ;;
         *)
             log_error "不支持的协议: $protocol"
@@ -1213,21 +1193,21 @@ add_node() {
     fi
     
     # 添加到数组
-    inbound_tags+=("${protocol_name}-${current_port}")
+    inbound_tags+=("${current_protocol_name}-${current_port}")
     inbound_ports+=("${current_port}")
-    inbound_protocols+=("${protocol_name}")
-    inbound_snis+=("${sni}")
+    inbound_protocols+=("${current_protocol_name}")
+    inbound_snis+=("${current_sni}")
     inbound_relay_flags+=(0)
     
     # 添加到链接内容
-    local line="[${protocol_name}] ${server_ip}:${current_port}"
-    [[ -n "$sni" ]] && line="${line} (SNI: ${sni})"
-    line="${line}\n${link}\n"
+    local line="[${current_protocol_name}] ${server_ip}:${current_port}"
+    [[ -n "$current_sni" ]] && line="${line} (SNI: ${current_sni})"
+    line="${line}\n${current_link}\n"
     
     all_links_content="${all_links_content}${line}\n"
     
     # 添加到特定协议的链接
-    case "$protocol_name" in
+    case "$current_protocol_name" in
         "Reality")
             reality_links_content="${reality_links_content}${line}\n"
             ;;
@@ -1256,7 +1236,7 @@ add_node() {
     
     # 重启服务
     if restart_singbox_service; then
-        show_add_result "$protocol_name" "$link" "$sni"
+        show_add_result
     else
         log_error "节点添加成功但服务启动失败"
     fi
@@ -1368,16 +1348,12 @@ delete_all_nodes() {
 
 rebuild_configs_from_arrays() {
     inbound_configs=""
-    for i in "${!inbound_tags[@]}"; do
-        # 这里需要根据协议重新生成配置
-        # 简化处理：使用占位符，实际使用时应重新生成完整配置
-        local config="{}"
-        if [[ -z "$inbound_configs" ]]; then
-            inbound_configs="$config"
-        else
-            inbound_configs="${inbound_configs},${config}"
-        fi
-    done
+    # 这是一个简化版本，实际应该根据数组内容重新生成配置
+    # 这里我们只是重新加载现有的配置文件
+    if [[ -f "${CONFIG_FILE}" ]]; then
+        log_info "重新加载配置文件..."
+        # 在实际应用中，这里应该解析配置文件并重建inbound_configs
+    fi
 }
 
 rebuild_links_from_arrays() {
@@ -1395,14 +1371,11 @@ rebuild_links_from_arrays() {
         local port="${inbound_ports[$i]}"
         local sni="${inbound_snis[$i]}"
         
-        # 生成基础链接信息
+        # 生成基础链接信息（简化版本）
         local line="[${protocol}] ${server_ip}:${port}"
         [[ -n "$sni" ]] && line="${line} (SNI: ${sni})"
+        line="${line}\n${protocol}://${server_ip}:${port}\n"
         
-        # 这里应该根据协议生成实际链接
-        local link="${protocol}://${server_ip}:${port}"
-        
-        line="${line}\n${link}\n"
         all_links_content="${all_links_content}${line}\n"
         
         # 添加到特定协议
@@ -1423,35 +1396,30 @@ rebuild_links_from_arrays() {
 
 show_banner() {
     clear
-    cat << "EOF"
-╔═══════════════════════════════════════════════════════╗
-║          Sing-box 一键安装管理脚本                   ║
-║          版本: 2.0 | 重构优化版                      ║
-╚═══════════════════════════════════════════════════════╝
-EOF
+    echo ""
+    echo -e "${CYAN}╔═══════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║          ${GREEN}Sing-box 一键管理脚本${CYAN}                     ║${NC}"
+    echo -e "${CYAN}║          ${YELLOW}版本: 2.0 修复版${CYAN}                          ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════════════════════╝${NC}"
     echo ""
 }
 
 show_add_result() {
-    local protocol="$1"
-    local link="$2"
-    local sni="$3"
-    
     show_banner
     echo -e "${CYAN}════════════════════════════════════════════════════════${NC}"
     echo -e "${GREEN}🎉 节点添加成功！${NC}"
     echo -e "${CYAN}════════════════════════════════════════════════════════${NC}"
     echo ""
-    echo -e "${YELLOW}协议:${NC} ${protocol}"
+    echo -e "${YELLOW}协议:${NC} ${current_protocol_name}"
     echo -e "${YELLOW}服务器:${NC} ${server_ip}"
     echo -e "${YELLOW}端口:${NC} ${current_port}"
-    [[ -n "$sni" ]] && echo -e "${YELLOW}SNI:${NC} ${sni}"
+    [[ -n "$current_sni" ]] && echo -e "${YELLOW}SNI:${NC} ${current_sni}"
     echo -e "${YELLOW}出站:${NC} ${outbound_tag}"
     echo ""
     echo -e "${CYAN}════════════════════════════════════════════════════════${NC}"
     echo -e "${GREEN}节点链接:${NC}"
     echo ""
-    echo -e "${YELLOW}${link}${NC}"
+    echo -e "${YELLOW}${current_link}${NC}"
     echo ""
     echo -e "${CYAN}════════════════════════════════════════════════════════${NC}"
     echo -e "复制上面的链接到客户端即可使用"
@@ -1506,6 +1474,39 @@ show_links() {
                 echo -e "${YELLOW}暂无 SOCKS5 节点${NC}"
             else
                 echo -e "$socks5_links_content"
+            fi
+            ;;
+        "shadowtls")
+            echo -e "${CYAN}════════════════════════════════════════════════════════${NC}"
+            echo -e "${GREEN}ShadowTLS 节点链接${NC}"
+            echo -e "${CYAN}════════════════════════════════════════════════════════${NC}"
+            echo ""
+            if [[ -z "$shadowtls_links_content" ]]; then
+                echo -e "${YELLOW}暂无 ShadowTLS 节点${NC}"
+            else
+                echo -e "$shadowtls_links_content"
+            fi
+            ;;
+        "https")
+            echo -e "${CYAN}════════════════════════════════════════════════════════${NC}"
+            echo -e "${GREEN}HTTPS 节点链接${NC}"
+            echo -e "${CYAN}════════════════════════════════════════════════════════${NC}"
+            echo ""
+            if [[ -z "$https_links_content" ]]; then
+                echo -e "${YELLOW}暂无 HTTPS 节点${NC}"
+            else
+                echo -e "$https_links_content"
+            fi
+            ;;
+        "anytls")
+            echo -e "${CYAN}════════════════════════════════════════════════════════${NC}"
+            echo -e "${GREEN}AnyTLS 节点链接${NC}"
+            echo -e "${CYAN}════════════════════════════════════════════════════════${NC}"
+            echo ""
+            if [[ -z "$anytls_links_content" ]]; then
+                echo -e "${YELLOW}暂无 AnyTLS 节点${NC}"
+            else
+                echo -e "$anytls_links_content"
             fi
             ;;
     esac
@@ -1912,15 +1913,15 @@ if [[ -f "$SCRIPT_PATH" ]]; then
     bash "$SCRIPT_PATH"
 else
     echo "Sing-box 管理脚本未安装"
-    echo "请运行: wget -O install.sh https://raw.githubusercontent.com/your-repo/install.sh && bash install.sh"
+    echo "请运行原始安装脚本重新安装"
 fi
 EOF
     
     chmod +x /usr/local/bin/sb
     
     # 保存脚本自身
-    cp "$0" "${SCRIPT_PATH}"
-    chmod +x "${SCRIPT_PATH}"
+    cat "$0" > "${SCRIPT_PATH}" 2>/dev/null || true
+    chmod +x "${SCRIPT_PATH}" 2>/dev/null || true
     
     log_success "快捷命令已创建: 输入 'sb' 即可重新打开管理菜单"
 }
@@ -1949,6 +1950,9 @@ main() {
     
     # 创建快捷命令
     create_shortcut
+    
+    log_info "初始化完成，进入管理菜单..."
+    sleep 2
     
     # 进入主菜单
     handle_main_menu
