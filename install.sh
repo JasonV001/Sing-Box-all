@@ -10,7 +10,7 @@ set -euo pipefail
 
 # -------------------------- 全局变量与配置 ---------------------------
 readonly SCRIPT_NAME="sing-box-installer"
-readonly VERSION="2.1.0"
+readonly SCRIPT_VERSION="2.1.0"
 readonly CONFIG_DIR="/etc/sing-box"
 readonly CERT_DIR="${CONFIG_DIR}/certs"
 readonly LINK_DIR="${CONFIG_DIR}/links"
