@@ -899,6 +899,14 @@ main() {
         exit 1
     }
 
+    # ==========【方案一】在此处初始化所有数组变量（核心修复）==========
+    inbound_tags=()
+    inbound_ports=()
+    inbound_protos=()
+    inbound_snis=()
+    inbound_relay_flags=()
+    # ===========================================================
+
     show_banner
     print_info "开始 Sing-box 安装与管理流程..."
     
@@ -930,6 +938,3 @@ main() {
     # 显示主菜单
     show_main_menu
 }
-
-# 脚本入口点
-main "$@"
