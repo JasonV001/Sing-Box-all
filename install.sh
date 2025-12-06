@@ -2157,9 +2157,9 @@ show_main_menu() {
             proto_list+="${proto}:${relay_proto_count[$proto]}"
         done
         
-        outbound_desc="混合 (直连:${direct_count} 中转:${relay_count} [${proto_list}])"
+        outbound_desc="中转 (直连:${direct_count} 中转:${relay_count} [${proto_list}])"
     else
-        outbound_desc="全部直连"
+        outbound_desc="直连"
     fi
     
     echo -e "  ${YELLOW}当前出站: ${GREEN}${outbound_desc}${NC}"
