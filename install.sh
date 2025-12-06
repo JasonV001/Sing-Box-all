@@ -1982,44 +1982,55 @@ generate_config() {
     fi
     
     # 构建 DNS 配置（根据出站 IP 模式）
+    # 使用 sing-box 1.12.0+ 的新格式
     local dns_config
     if [[ "$OUTBOUND_IP_MODE" == "ipv6" ]]; then
         dns_config='{
     "servers": [
       {
-        "tag": "dns-remote",
-        "address": "https://1.1.1.1/dns-query",
-        "address_resolver": "dns-direct",
-        "strategy": "prefer_ipv6"
-      },
-      {
         "tag": "dns-direct",
         "address": "local",
-        "strategy": "prefer_ipv6",
         "detour": "direct"
+      },
+      {
+        "tag": "dns-remote",
+        "address": "https://1.1.1.1/dns-query",
+        "address_resolver": "dns-direct"
       }
     ],
-    "rules": [],
-    "strategy": "prefer_ipv6"
+    "rules": [
+      {
+        "outbound": "any",
+        "server": "dns-direct"
+      }
+    ],
+    "strategy": "prefer_ipv6",
+    "disable_cache": false,
+    "disable_expire": false
   }'
     else
         dns_config='{
     "servers": [
       {
-        "tag": "dns-remote",
-        "address": "https://1.1.1.1/dns-query",
-        "address_resolver": "dns-direct",
-        "strategy": "prefer_ipv4"
-      },
-      {
         "tag": "dns-direct",
         "address": "local",
-        "strategy": "prefer_ipv4",
         "detour": "direct"
+      },
+      {
+        "tag": "dns-remote",
+        "address": "https://1.1.1.1/dns-query",
+        "address_resolver": "dns-direct"
       }
     ],
-    "rules": [],
-    "strategy": "prefer_ipv4"
+    "rules": [
+      {
+        "outbound": "any",
+        "server": "dns-direct"
+      }
+    ],
+    "strategy": "prefer_ipv4",
+    "disable_cache": false,
+    "disable_expire": false
   }'
     fi
     
