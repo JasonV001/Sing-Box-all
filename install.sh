@@ -1988,20 +1988,20 @@ generate_config() {
         dns_config='{
     "servers": [
       {
-        "tag": "dns-direct",
-        "address": "local",
+        "tag": "dns-remote",
+        "address": "https://1.1.1.1/dns-query",
         "detour": "direct"
       },
       {
-        "tag": "dns-remote",
-        "address": "https://1.1.1.1/dns-query",
-        "address_resolver": "dns-direct"
+        "tag": "dns-local",
+        "address": "local",
+        "detour": "direct"
       }
     ],
     "rules": [
       {
         "outbound": "any",
-        "server": "dns-direct"
+        "server": "dns-local"
       }
     ],
     "strategy": "prefer_ipv6",
@@ -2012,20 +2012,20 @@ generate_config() {
         dns_config='{
     "servers": [
       {
-        "tag": "dns-direct",
-        "address": "local",
+        "tag": "dns-remote",
+        "address": "https://1.1.1.1/dns-query",
         "detour": "direct"
       },
       {
-        "tag": "dns-remote",
-        "address": "https://1.1.1.1/dns-query",
-        "address_resolver": "dns-direct"
+        "tag": "dns-local",
+        "address": "local",
+        "detour": "direct"
       }
     ],
     "rules": [
       {
         "outbound": "any",
-        "server": "dns-direct"
+        "server": "dns-local"
       }
     ],
     "strategy": "prefer_ipv4",
