@@ -1881,20 +1881,18 @@ delete_all_nodes() {
   "dns": {
     "servers": [
       {
-        "tag": "dns-remote",
-        "address": "tls://dns.google",
-        "detour": "direct"
+        "tag": "remote",
+        "address": "https://dns.google/dns-query"
       },
       {
-        "tag": "dns-direct",
+        "tag": "local",
         "address": "local",
         "detour": "direct"
       }
     ],
     "rules": [],
-    "final": "dns-remote",
-    "strategy": "${dns_strategy}",
-    "independent_cache": true
+    "final": "remote",
+    "strategy": "${dns_strategy}"
   },
   "inbounds": [],
   "outbounds": [
@@ -1905,7 +1903,7 @@ delete_all_nodes() {
   ],
   "route": {
     "final": "direct",
-    "default_domain_resolver": "dns-direct"
+    "default_domain_resolver": "local"
   }
 }
 EOFCONFIG
@@ -1984,50 +1982,47 @@ generate_config() {
             [[ $i -gt 0 ]] && route_json+=","
             route_json+="${route_rules[$i]}"
         done
-        route_json+="],\"final\":\"direct\",\"default_domain_resolver\":\"dns-direct\"}"
+        route_json+="],\"final\":\"direct\",\"default_domain_resolver\":\"local\"}"
     else
-        route_json="{\"final\":\"direct\",\"default_domain_resolver\":\"dns-direct\"}"
+        route_json="{\"final\":\"direct\",\"default_domain_resolver\":\"local\"}"
     fi
     
     # 构建 DNS 配置（根据出站 IP 模式）
+    # 使用 sing-box 1.12.0+ 新格式
     local dns_json
     if [[ "$OUTBOUND_IP_MODE" == "ipv6" ]]; then
         dns_json='{
     "servers": [
       {
-        "tag": "dns-remote",
-        "address": "tls://dns.google",
-        "detour": "direct"
+        "tag": "remote",
+        "address": "https://dns.google/dns-query"
       },
       {
-        "tag": "dns-direct",
+        "tag": "local",
         "address": "local",
         "detour": "direct"
       }
     ],
     "rules": [],
-    "final": "dns-remote",
-    "strategy": "prefer_ipv6",
-    "independent_cache": true
+    "final": "remote",
+    "strategy": "prefer_ipv6"
   }'
     else
         dns_json='{
     "servers": [
       {
-        "tag": "dns-remote",
-        "address": "tls://dns.google",
-        "detour": "direct"
+        "tag": "remote",
+        "address": "https://dns.google/dns-query"
       },
       {
-        "tag": "dns-direct",
+        "tag": "local",
         "address": "local",
         "detour": "direct"
       }
     ],
     "rules": [],
-    "final": "dns-remote",
-    "strategy": "prefer_ipv4",
-    "independent_cache": true
+    "final": "remote",
+    "strategy": "prefer_ipv4"
   }'
     fi
     
