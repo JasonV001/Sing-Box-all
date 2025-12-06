@@ -1881,19 +1881,18 @@ delete_all_nodes() {
   "dns": {
     "servers": [
       {
-        "tag": "dns-direct",
-        "address": "local",
+        "tag": "dns-remote",
+        "address": "tls://dns.google",
         "detour": "direct"
       },
       {
-        "tag": "dns-remote",
-        "address": "8.8.8.8",
-        "address_resolver": "dns-direct",
-        "address_strategy": "${dns_strategy}",
+        "tag": "dns-direct",
+        "address": "local",
         "detour": "direct"
       }
     ],
     "rules": [],
+    "final": "dns-remote",
     "strategy": "${dns_strategy}",
     "independent_cache": true
   },
@@ -1996,19 +1995,18 @@ generate_config() {
         dns_json='{
     "servers": [
       {
-        "tag": "dns-direct",
-        "address": "local",
+        "tag": "dns-remote",
+        "address": "tls://dns.google",
         "detour": "direct"
       },
       {
-        "tag": "dns-remote",
-        "address": "8.8.8.8",
-        "address_resolver": "dns-direct",
-        "address_strategy": "prefer_ipv6",
+        "tag": "dns-direct",
+        "address": "local",
         "detour": "direct"
       }
     ],
     "rules": [],
+    "final": "dns-remote",
     "strategy": "prefer_ipv6",
     "independent_cache": true
   }'
@@ -2016,19 +2014,18 @@ generate_config() {
         dns_json='{
     "servers": [
       {
-        "tag": "dns-direct",
-        "address": "local",
+        "tag": "dns-remote",
+        "address": "tls://dns.google",
         "detour": "direct"
       },
       {
-        "tag": "dns-remote",
-        "address": "8.8.8.8",
-        "address_resolver": "dns-direct",
-        "address_strategy": "prefer_ipv4",
+        "tag": "dns-direct",
+        "address": "local",
         "detour": "direct"
       }
     ],
     "rules": [],
+    "final": "dns-remote",
     "strategy": "prefer_ipv4",
     "independent_cache": true
   }'
