@@ -259,6 +259,88 @@ load_links_from_files() {
     [[ -f "${ANYTLS_LINKS_FILE}" ]] && ANYTLS_LINKS=$(cat "${ANYTLS_LINKS_FILE}")
 }
 
+# 从配置文件加载节点信息
+load_inbounds_from_config() {
+    if [[ ! -f "${CONFIG_FILE}" ]]; then
+        return 1
+    fi
+    
+    if ! command -v jq &>/dev/null; then
+        return 1
+    fi
+    
+    # 清空数组
+    INBOUND_TAGS=()
+    INBOUND_PORTS=()
+    INBOUND_PROTOS=()
+    INBOUND_SNIS=()
+    INBOUND_RELAY_FLAGS=()
+    INBOUNDS_JSON=""
+    
+    local inbounds_count=$(jq '.inbounds | length' "${CONFIG_FILE}" 2>/dev/null || echo "0")
+    
+    if [[ "$inbounds_count" -eq 0 ]]; then
+        return 1
+    fi
+    
+    local inbound_list=""
+    
+    for ((i=0; i<inbounds_count; i++)); do
+        local inbound=$(jq -c ".inbounds[${i}]" "${CONFIG_FILE}" 2>/dev/null)
+        
+        if [[ -z "$inbound" ]]; then
+            continue
+        fi
+        
+        # 添加到 INBOUNDS_JSON
+        if [[ -z "$inbound_list" ]]; then
+            inbound_list="$inbound"
+        else
+            inbound_list="${inbound_list},${inbound}"
+        fi
+        
+        # 提取信息
+        local tag=$(echo "$inbound" | jq -r '.tag' 2>/dev/null || echo "unknown")
+        local port=$(echo "$inbound" | jq -r '.listen_port' 2>/dev/null || echo "0")
+        local type=$(echo "$inbound" | jq -r '.type' 2>/dev/null || echo "unknown")
+        
+        # 判断协议类型
+        local proto="unknown"
+        local sni=""
+        
+        if [[ "$tag" == *"vless-in-"* ]]; then
+            proto="Reality"
+            sni=$(echo "$inbound" | jq -r '.tls.server_name // ""' 2>/dev/null)
+        elif [[ "$tag" == *"hy2-in-"* ]]; then
+            proto="Hysteria2"
+            sni=$(echo "$inbound" | jq -r '.tls.server_name // ""' 2>/dev/null)
+        elif [[ "$tag" == *"socks-in"* ]]; then
+            proto="SOCKS5"
+        elif [[ "$tag" == *"shadowtls-in-"* ]]; then
+            proto="ShadowTLS v3"
+            sni=$(echo "$inbound" | jq -r '.handshake.server // ""' 2>/dev/null)
+        elif [[ "$tag" == *"vless-tls-in-"* ]]; then
+            proto="HTTPS"
+            sni=$(echo "$inbound" | jq -r '.tls.server_name // ""' 2>/dev/null)
+        elif [[ "$tag" == *"anytls-in-"* ]]; then
+            proto="AnyTLS"
+            sni=$(echo "$inbound" | jq -r '.tls.server_name // ""' 2>/dev/null)
+        fi
+        
+        [[ -z "$sni" ]] && sni="${DEFAULT_SNI}"
+        
+        INBOUND_TAGS+=("$tag")
+        INBOUND_PORTS+=("$port")
+        INBOUND_PROTOS+=("$proto")
+        INBOUND_SNIS+=("$sni")
+        INBOUND_RELAY_FLAGS+=(0)
+    done
+    
+    INBOUNDS_JSON="$inbound_list"
+    
+    return 0
+}
+
 cleanup_links() {
     print_info "清理所有链接文件..."
     rm -rf "${LINK_DIR}" 2>/dev/null || true
@@ -906,31 +988,48 @@ delete_single_node() {
         return 0
     fi
     
-    unset INBOUND_TAGS[$index]
-    unset INBOUND_PORTS[$index]
-    unset INBOUND_PROTOS[$index]
-    unset INBOUND_SNIS[$index]
-    unset INBOUND_RELAY_FLAGS[$index]
-    
-    INBOUND_TAGS=("${INBOUND_TAGS[@]}")
-    INBOUND_PORTS=("${INBOUND_PORTS[@]}")
-    INBOUND_PROTOS=("${INBOUND_PROTOS[@]}")
-    INBOUND_SNIS=("${INBOUND_SNIS[@]}")
-    INBOUND_RELAY_FLAGS=("${INBOUND_RELAY_FLAGS[@]}")
-    
-    INBOUNDS_JSON=""
-    for i in "${!INBOUND_TAGS[@]}"; do
-        local node_tag="${INBOUND_TAGS[$i]}"
-        local node_port="${INBOUND_PORTS[$i]}"
-        local node_proto="${INBOUND_PROTOS[$i]}"
+    # 从配置文件中删除节点
+    if [[ -f "${CONFIG_FILE}" ]] && command -v jq &>/dev/null; then
+        print_info "从配置文件删除节点..."
         
-        print_info "重建节点配置: ${node_proto}:${node_port}"
-    done
-    
-    generate_config
-    start_svc
-    
-    print_success "节点已删除: ${proto}:${port} (SNI: ${sni})"
+        # 使用 jq 过滤掉要删除的节点
+        local temp_config=$(mktemp)
+        jq --arg tag "$tag" '.inbounds |= map(select(.tag != $tag))' "${CONFIG_FILE}" > "$temp_config"
+        mv "$temp_config" "${CONFIG_FILE}"
+        
+        # 从数组中删除
+        unset INBOUND_TAGS[$index]
+        unset INBOUND_PORTS[$index]
+        unset INBOUND_PROTOS[$index]
+        unset INBOUND_SNIS[$index]
+        unset INBOUND_RELAY_FLAGS[$index]
+        
+        # 重建数组（移除空元素）
+        INBOUND_TAGS=("${INBOUND_TAGS[@]}")
+        INBOUND_PORTS=("${INBOUND_PORTS[@]}")
+        INBOUND_PROTOS=("${INBOUND_PROTOS[@]}")
+        INBOUND_SNIS=("${INBOUND_SNIS[@]}")
+        INBOUND_RELAY_FLAGS=("${INBOUND_RELAY_FLAGS[@]}")
+        
+        # 重新加载配置
+        load_inbounds_from_config
+        
+        # 重启服务
+        print_info "重启服务..."
+        systemctl restart sing-box
+        sleep 2
+        
+        if systemctl is-active --quiet sing-box; then
+            print_success "节点已删除: ${proto}:${port} (SNI: ${sni})"
+            print_success "服务已重启"
+        else
+            print_error "服务重启失败"
+            journalctl -u sing-box -n 10 --no-pager
+        fi
+    else
+        print_error "无法删除节点：配置文件不存在或 jq 未安装"
+        return 1
+    fi
 }
 
 delete_all_nodes() {
@@ -1462,12 +1561,9 @@ delete_self() {
 
 # ==================== 主循环 ====================
 main_menu() {
-    echo "[DEBUG] 进入 main_menu 函数"
     while true; do
-        echo "[DEBUG] 显示主菜单"
         show_main_menu
         read -p "请选择 [0-6]: " m_choice
-        echo "[DEBUG] 用户选择: $m_choice"
         
         case $m_choice in
             1)
@@ -1520,37 +1616,20 @@ EOSB
 
 # ==================== 主函数 ====================
 main() {
-    echo "[DEBUG] main 函数开始执行"
-    
     if [[ $EUID -ne 0 ]]; then
         print_error "需要 root 权限"
         exit 1
     fi
     
-    echo "[DEBUG] 1. 检测系统"
     detect_system
-    
-    echo "[DEBUG] 2. 安装 singbox"
     install_singbox
-    
-    echo "[DEBUG] 3. 创建目录"
     mkdir -p /etc/sing-box
-    
-    echo "[DEBUG] 4. 生成密钥"
     gen_keys
-    
-    echo "[DEBUG] 5. 获取IP"
     get_ip
-    
-    echo "[DEBUG] 6. 创建快捷命令"
     setup_sb_shortcut
-    
-    echo "[DEBUG] 7. 加载链接文件"
     load_links_from_files
     
-    echo "[DEBUG] 8. 准备进入主菜单..."
     main_menu
-    echo "[DEBUG] 9. 主菜单已退出"
 }
 
 main
