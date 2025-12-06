@@ -509,7 +509,6 @@ regenerate_links_from_config() {
 }
 
 cleanup_links() {
-    print_info "清理所有链接文件..."
     rm -rf "${LINK_DIR}" 2>/dev/null || true
     ALL_LINKS_TEXT=""
     REALITY_LINKS=""
@@ -518,7 +517,29 @@ cleanup_links() {
     SHADOWTLS_LINKS=""
     HTTPS_LINKS=""
     ANYTLS_LINKS=""
-    print_success "链接文件已清理"
+}
+
+regenerate_all_links() {
+    echo ""
+    echo -e "${YELLOW}此操作将从配置文件重新生成所有节点链接${NC}"
+    echo ""
+    
+    if [[ ! -f "${CONFIG_FILE}" ]]; then
+        print_error "配置文件不存在，无法重新生成链接"
+        return 1
+    fi
+    
+    print_info "清理旧链接文件..."
+    cleanup_links
+    
+    print_info "从配置文件重新生成链接..."
+    if regenerate_links_from_config; then
+        print_success "链接文件已重新生成"
+        print_info "可以在 [配置/查看节点] 菜单中查看"
+    else
+        print_error "重新生成链接失败"
+        return 1
+    fi
 }
 
 # ==================== 网络工具 ====================
@@ -776,7 +797,7 @@ setup_shadowtls() {
     local line="[ShadowTLS v3] ${SERVER_IP}:${PORT} (SNI: ${SHADOWTLS_SNI})\n${LINK}\n"
     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
     SHADOWTLS_LINKS="${SHADOWTLS_LINKS}${line}\n"
-    EXTRA_INFO="Shadowsocks方法: 2022-blake3-aes-128-gcm\nShadowsocks密码: ${SS_PASSWORD}\nShadowTLS密码: ${SHADOWTLS_PASSWORD}\n伪装域名: ${SHADOWTLS_SNI}\n\n说明: 可直接复制链接导入 Shadowrocket"
+    EXTRA_INFO="Shadowsocks方法: 2022-blake3-aes-128-gcm\nShadowsocks密码: ${SS_PASSWORD}\nShadowTLS密码: ${SHADOWTLS_PASSWORD}\n伪装域名: ${SHADOWTLS_SNI}\n\n说明: 可直接复制链接导入 Shadowrocket、NekoBox、v2rayN 等客户端"
     
     INBOUND_TAGS+=("shadowtls-in-${PORT}")
     INBOUND_PORTS+=("${PORT}")
@@ -1472,7 +1493,41 @@ show_main_menu() {
     fi
     
     echo -e "  ${YELLOW}当前出站: ${GREEN}${outbound_desc}${NC}"
+    
+    # 统计各协议节点数
+    local reality_count=0
+    local hysteria2_count=0
+    local socks5_count=0
+    local shadowtls_count=0
+    local https_count=0
+    local anytls_count=0
+    
+    for proto in "${INBOUND_PROTOS[@]}"; do
+        case "$proto" in
+            "Reality") ((reality_count++)) ;;
+            "Hysteria2") ((hysteria2_count++)) ;;
+            "SOCKS5") ((socks5_count++)) ;;
+            "ShadowTLS v3") ((shadowtls_count++)) ;;
+            "HTTPS") ((https_count++)) ;;
+            "AnyTLS") ((anytls_count++)) ;;
+        esac
+    done
+    
     echo -e "  ${YELLOW}当前节点数: ${GREEN}${#INBOUND_TAGS[@]}${NC}"
+    
+    if [[ ${#INBOUND_TAGS[@]} -gt 0 ]]; then
+        local node_details=""
+        [[ $reality_count -gt 0 ]] && node_details="${node_details}Reality:${reality_count} "
+        [[ $hysteria2_count -gt 0 ]] && node_details="${node_details}Hysteria2:${hysteria2_count} "
+        [[ $socks5_count -gt 0 ]] && node_details="${node_details}SOCKS5:${socks5_count} "
+        [[ $shadowtls_count -gt 0 ]] && node_details="${node_details}ShadowTLS:${shadowtls_count} "
+        [[ $https_count -gt 0 ]] && node_details="${node_details}HTTPS:${https_count} "
+        [[ $anytls_count -gt 0 ]] && node_details="${node_details}AnyTLS:${anytls_count} "
+        
+        if [[ -n "$node_details" ]]; then
+            echo -e "  ${CYAN}  └─ ${node_details}${NC}"
+        fi
+    fi
     echo ""
     echo -e "  ${GREEN}[1]${NC} 添加/继续添加节点"
     echo ""
@@ -1482,7 +1537,7 @@ show_main_menu() {
     echo ""
     echo -e "  ${GREEN}[4]${NC} 配置 / 查看节点"
     echo ""
-    echo -e "  ${GREEN}[5]${NC} 清理链接文件"
+    echo -e "  ${GREEN}[5]${NC} 重新生成链接文件"
     echo ""
     echo -e "  ${GREEN}[6]${NC} 一键删除脚本并退出"
     echo ""
@@ -1589,6 +1644,8 @@ config_and_view_menu() {
                     echo "(暂无 ShadowTLS 节点)"
                 else
                     echo -e "$SHADOWTLS_LINKS"
+                    echo ""
+                    echo -e "${CYAN}提示: 可直接复制上方 ss:// 链接导入客户端 (Shadowrocket/NekoBox/v2rayN)${NC}"
                 fi
                 echo ""
                 read -p "按回车返回..." _
@@ -1763,7 +1820,7 @@ main_menu() {
                 config_and_view_menu
                 ;;
             5)
-                cleanup_links
+                regenerate_all_links
                 ;;
             6)
                 delete_self
