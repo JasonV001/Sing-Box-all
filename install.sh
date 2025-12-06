@@ -987,10 +987,16 @@ parse_socks_link() {
     if [[ "$data" =~ @ ]]; then
         local userpass=$(echo "$data" | cut -d'@' -f1)
         local username=$(echo "$userpass" | cut -d':' -f1)
-        local password=$(echo "$userpass" | cut -d':' -f2)
+        local password=$(echo "$userpass" | cut -d':' -f2-)
         local server_port=$(echo "$data" | cut -d'@' -f2)
         local server=$(echo "$server_port" | cut -d':' -f1)
         local port=$(echo "$server_port" | cut -d':' -f2)
+        
+        # 验证端口是否为数字
+        if ! [[ "$port" =~ ^[0-9]+$ ]]; then
+            print_error "端口无效: ${port}"
+            return 1
+        fi
         
         local tag="relay-socks5-${#RELAY_TAGS[@]}"
         relay_json="{
@@ -1006,6 +1012,12 @@ parse_socks_link() {
     else
         local server=$(echo "$data" | cut -d':' -f1)
         local port=$(echo "$data" | cut -d':' -f2)
+        
+        # 验证端口是否为数字
+        if ! [[ "$port" =~ ^[0-9]+$ ]]; then
+            print_error "端口无效: ${port}"
+            return 1
+        fi
         
         local tag="relay-socks5-${#RELAY_TAGS[@]}"
         relay_json="{
