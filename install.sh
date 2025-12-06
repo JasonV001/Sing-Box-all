@@ -1976,9 +1976,9 @@ generate_config() {
             [[ $i -gt 0 ]] && route_json+=","
             route_json+="${route_rules[$i]}"
         done
-        route_json+="],\"final\":\"direct\"}"
+        route_json+="],\"final\":\"direct\",\"default_domain_resolver\":\"dns-local\"}"
     else
-        route_json='{"final":"direct"}'
+        route_json="{\"final\":\"direct\",\"default_domain_resolver\":\"dns-local\"}"
     fi
     
     # 构建 DNS 配置（根据出站 IP 模式）
@@ -1988,20 +1988,9 @@ generate_config() {
         dns_config='{
     "servers": [
       {
-        "tag": "dns-remote",
-        "address": "https://1.1.1.1/dns-query",
-        "detour": "direct"
-      },
-      {
         "tag": "dns-local",
         "address": "local",
         "detour": "direct"
-      }
-    ],
-    "rules": [
-      {
-        "outbound": "any",
-        "server": "dns-local"
       }
     ],
     "strategy": "prefer_ipv6",
@@ -2012,20 +2001,9 @@ generate_config() {
         dns_config='{
     "servers": [
       {
-        "tag": "dns-remote",
-        "address": "https://1.1.1.1/dns-query",
-        "detour": "direct"
-      },
-      {
         "tag": "dns-local",
         "address": "local",
         "detour": "direct"
-      }
-    ],
-    "rules": [
-      {
-        "outbound": "any",
-        "server": "dns-local"
       }
     ],
     "strategy": "prefer_ipv4",
