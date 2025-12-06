@@ -188,10 +188,26 @@ gen_cert_for_sni() {
     
     mkdir -p "${node_cert_dir}"
     
-    openssl genrsa -out "${node_cert_dir}/private.key" 2048 2>/dev/null
-    openssl req -new -x509 -days 36500 -key "${node_cert_dir}/private.key" -out "${node_cert_dir}/cert.pem" -subj "/C=US/ST=California/L=Cupertino/O=Apple Inc./CN=${sni}" 2>/dev/null
+    # 验证域名是否可访问（可选，不影响证书生成）
+    if curl --output /dev/null --silent --head --fail --max-time 3 "https://${sni}" 2>/dev/null; then
+        print_info "域名 ${sni} 可访问，生成自签证书..."
+    else
+        print_warning "域名 ${sni} 无法访问，仍将生成自签证书"
+    fi
     
-    print_success "证书生成完成 (${sni}, 有效期100年)"
+    # 使用 ECC (椭圆曲线) 生成证书，比 RSA 更高效
+    # prime256v1 是 NIST P-256 曲线，广泛支持且安全
+    openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) \
+        -keyout "${node_cert_dir}/private.key" \
+        -out "${node_cert_dir}/cert.pem" \
+        -subj "/CN=${sni}" \
+        -days 36500 2>/dev/null
+    
+    # 设置权限
+    chmod 600 "${node_cert_dir}/private.key"
+    chmod 644 "${node_cert_dir}/cert.pem"
+    
+    print_success "证书生成完成 (${sni}, ECC 算法, 有效期100年)"
 }
 
 # ==================== 密钥管理 ====================
