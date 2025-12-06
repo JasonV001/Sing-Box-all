@@ -440,7 +440,7 @@ regenerate_links_from_config() {
                 [[ -z "$sni" ]] && sni="${DEFAULT_SNI}"
                 
                 if [[ -n "$password" ]]; then
-                    local link="hy2://${password}@${SERVER_IP}:${port}?sni=${sni}&alpn=h3&insecure=1#Hy2-${SERVER_IP}"
+                    local link="hysteria2://${password}@${SERVER_IP}:${port}?insecure=1&sni=${sni}#Hysteria2-${SERVER_IP}"
                     local line="[Hysteria2] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n"
                     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
                     HYSTERIA2_LINKS="${HYSTERIA2_LINKS}${line}\n"
@@ -483,10 +483,6 @@ regenerate_links_from_config() {
                         local link="ss://${ss_userinfo}@${SERVER_IP}:${port}?shadow-tls=${plugin_base64}#ShadowTLS-${SERVER_IP}"
                         
                         local line="[ShadowTLS v3] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n"
-                        ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
-                        SHADOWTLS_LINKS="${SHADOWTLS_LINKS}${line}\n"
-                    else
-                        local line="[ShadowTLS v3] ${SERVER_IP}:${port} (SNI: ${sni}) (需要查看配置获取完整信息)\n"
                         ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
                         SHADOWTLS_LINKS="${SHADOWTLS_LINKS}${line}\n"
                     fi
@@ -661,7 +657,7 @@ setup_hysteria2() {
         INBOUNDS_JSON="${INBOUNDS_JSON},${inbound}"
     fi
     
-    LINK="hy2://${HY2_PASSWORD}@${SERVER_IP}:${PORT}?sni=${HY2_SNI}&alpn=h3&insecure=1#Hy2-${SERVER_IP}"
+    LINK="hysteria2://${HY2_PASSWORD}@${SERVER_IP}:${PORT}?insecure=1&sni=${HY2_SNI}#Hysteria2-${SERVER_IP}"
     PROTO="Hysteria2"
     EXTRA_INFO="密码: ${HY2_PASSWORD}\n证书: 自签证书(${HY2_SNI})\nSNI: ${HY2_SNI}"
     local line="[Hysteria2] ${SERVER_IP}:${PORT} (SNI: ${HY2_SNI})\n${LINK}\n"
