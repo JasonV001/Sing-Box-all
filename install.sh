@@ -440,7 +440,7 @@ regenerate_links_from_config() {
                         
                         if [[ -n "$uuid" && -n "$pbk" ]]; then
                             local link="vless://${uuid}@${SERVER_IP}:${port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${sni}&fp=chrome&pbk=${pbk}&sid=${sid}&type=tcp#Reality-${SERVER_IP}"
-                            local line="[Reality] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n\n----------------------------------------\n\n"
+                            local line="[Reality] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n----------------------------------------\n\n"
                             ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}"
                             REALITY_LINKS="${REALITY_LINKS}${line}"
                         fi
@@ -454,7 +454,7 @@ regenerate_links_from_config() {
                         
                         if [[ -n "$uuid" ]]; then
                             local link="vless://${uuid}@${SERVER_IP}:${port}?encryption=none&security=tls&sni=${sni}&type=tcp&allowInsecure=1#HTTPS-${SERVER_IP}"
-                            local line="[HTTPS] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n\n----------------------------------------\n\n"
+                            local line="[HTTPS] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n----------------------------------------\n\n"
                             ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}"
                             HTTPS_LINKS="${HTTPS_LINKS}${line}"
                         fi
@@ -469,7 +469,7 @@ regenerate_links_from_config() {
                 
                 if [[ -n "$password" ]]; then
                     local link="hysteria2://${password}@${SERVER_IP}:${port}?insecure=1&sni=${sni}&h2=#Hysteria2-${SERVER_IP}"
-                    local line="[Hysteria2] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n\n----------------------------------------\n\n"
+                    local line="[Hysteria2] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n----------------------------------------\n\n"
                     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}"
                     HYSTERIA2_LINKS="${HYSTERIA2_LINKS}${line}"
                 fi
@@ -486,7 +486,7 @@ regenerate_links_from_config() {
                 fi
                 
                 if [[ -n "$link" ]]; then
-                    local line="[SOCKS5] ${SERVER_IP}:${port}\n${link}\n\n----------------------------------------\n\n"
+                    local line="[SOCKS5] ${SERVER_IP}:${port}\n${link}\n----------------------------------------\n\n"
                     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}"
                     SOCKS5_LINKS="${SOCKS5_LINKS}${line}"
                 fi
@@ -510,7 +510,7 @@ regenerate_links_from_config() {
                         local plugin_base64=$(echo -n "$plugin_json" | base64 -w0)
                         local link="ss://${ss_userinfo}@${SERVER_IP}:${port}?shadow-tls=${plugin_base64}#ShadowTLS-${SERVER_IP}"
                         
-                        local line="[ShadowTLS v3] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n\n----------------------------------------\n\n"
+                        local line="[ShadowTLS v3] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n----------------------------------------\n\n"
                         ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}"
                         SHADOWTLS_LINKS="${SHADOWTLS_LINKS}${line}"
                     fi
@@ -524,7 +524,7 @@ regenerate_links_from_config() {
                 
                 if [[ -n "$password" ]]; then
                     local link="anytls://${password}@${SERVER_IP}:${port}?security=tls&fp=chrome&insecure=1&sni=${sni}&type=tcp#AnyTLS-${SERVER_IP}"
-                    local line="[AnyTLS] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n\n----------------------------------------\n\n"
+                    local line="[AnyTLS] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n----------------------------------------\n\n"
                     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}"
                     ANYTLS_LINKS="${ANYTLS_LINKS}${line}"
                 fi
@@ -751,7 +751,7 @@ setup_reality() {
     
     PROTO="Reality"
     EXTRA_INFO="UUID: ${UUID}\nPublic Key: ${REALITY_PUBLIC}\nShort ID: ${SHORT_ID}\nSNI: ${SNI}"
-    local line="[Reality] ${SERVER_IP}:${PORT} (SNI: ${SNI})\n${LINK}\n\n----------------------------------------\n\n"
+    local line="[Reality] ${SERVER_IP}:${PORT} (SNI: ${SNI})\n${LINK}\n----------------------------------------\n\n"
     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}"
     REALITY_LINKS="${REALITY_LINKS}${line}"
     
@@ -804,7 +804,7 @@ setup_hysteria2() {
     LINK="hysteria2://${HY2_PASSWORD}@${SERVER_IP}:${PORT}?insecure=1&sni=${HY2_SNI}&h2=#Hysteria2-${SERVER_IP}"
     PROTO="Hysteria2"
     EXTRA_INFO="密码: ${HY2_PASSWORD}\n证书: 自签证书(${HY2_SNI})\nSNI: ${HY2_SNI}"
-    local line="[Hysteria2] ${SERVER_IP}:${PORT} (SNI: ${HY2_SNI})\n${LINK}\n\n----------------------------------------\n\n"
+    local line="[Hysteria2] ${SERVER_IP}:${PORT} (SNI: ${HY2_SNI})\n${LINK}\n----------------------------------------\n\n"
     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}"
     HYSTERIA2_LINKS="${HYSTERIA2_LINKS}${line}"
     
@@ -855,7 +855,7 @@ setup_socks5() {
     fi
     
     PROTO="SOCKS5"
-    local line="[SOCKS5] ${SERVER_IP}:${PORT}\n${LINK}\n\n----------------------------------------\n\n"
+    local line="[SOCKS5] ${SERVER_IP}:${PORT}\n${LINK}\n----------------------------------------\n\n"
     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}"
     SOCKS5_LINKS="${SOCKS5_LINKS}${line}"
     
@@ -917,7 +917,7 @@ setup_shadowtls() {
     fi
     
     PROTO="ShadowTLS v3"
-    local line="[ShadowTLS v3] ${SERVER_IP}:${PORT} (SNI: ${SHADOWTLS_SNI})\n${LINK}\n\n----------------------------------------\n\n"
+    local line="[ShadowTLS v3] ${SERVER_IP}:${PORT} (SNI: ${SHADOWTLS_SNI})\n${LINK}\n----------------------------------------\n\n"
     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}"
     SHADOWTLS_LINKS="${SHADOWTLS_LINKS}${line}"
     EXTRA_INFO="Shadowsocks方法: 2022-blake3-aes-128-gcm\nShadowsocks密码: ${SS_PASSWORD}\nShadowTLS密码: ${SHADOWTLS_PASSWORD}\n伪装域名: ${SHADOWTLS_SNI}\n\n说明: 可直接复制链接导入 Shadowrocket、NekoBox、v2rayN 等客户端"
@@ -971,7 +971,7 @@ setup_https() {
     
     PROTO="HTTPS"
     EXTRA_INFO="UUID: ${UUID}\n证书: 自签证书(${HTTPS_SNI})\nSNI: ${HTTPS_SNI}"
-    local line="[HTTPS] ${SERVER_IP}:${PORT} (SNI: ${HTTPS_SNI})\n${LINK}\n\n----------------------------------------\n\n"
+    local line="[HTTPS] ${SERVER_IP}:${PORT} (SNI: ${HTTPS_SNI})\n${LINK}\n----------------------------------------\n\n"
     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}"
     HTTPS_LINKS="${HTTPS_LINKS}${line}"
     
@@ -1025,7 +1025,7 @@ setup_anytls() {
     
     PROTO="AnyTLS"
     EXTRA_INFO="密码: ${ANYTLS_PASSWORD}\n自签证书: ${ANYTLS_SNI}\nSNI: ${ANYTLS_SNI}"
-    local line="[AnyTLS] ${SERVER_IP}:${PORT} (SNI: ${ANYTLS_SNI})\n${LINK}\n\n----------------------------------------\n\n"
+    local line="[AnyTLS] ${SERVER_IP}:${PORT} (SNI: ${ANYTLS_SNI})\n${LINK}\n----------------------------------------\n\n"
     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}"
     ANYTLS_LINKS="${ANYTLS_LINKS}${line}"
     
