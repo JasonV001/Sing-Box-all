@@ -1976,34 +1976,9 @@ generate_config() {
             [[ $i -gt 0 ]] && route_json+=","
             route_json+="${route_rules[$i]}"
         done
-        route_json+="],\"final\":\"direct\",\"default_domain_resolver\":\"local\"}"
+        route_json+="],\"final\":\"direct\"}"
     else
-        route_json="{\"final\":\"direct\",\"default_domain_resolver\":\"local\"}"
-    fi
-    
-    # 构建 DNS 配置（根据出站 IP 模式）
-    # 使用 sing-box 1.12.0+ 的新格式
-    local dns_config
-    if [[ "$OUTBOUND_IP_MODE" == "ipv6" ]]; then
-        dns_config='{
-    "servers": [
-      {
-        "tag": "local",
-        "address": "local"
-      }
-    ],
-    "strategy": "prefer_ipv6"
-  }'
-    else
-        dns_config='{
-    "servers": [
-      {
-        "tag": "local",
-        "address": "local"
-      }
-    ],
-    "strategy": "prefer_ipv4"
-  }'
+        route_json='{"final":"direct"}'
     fi
     
     cat > ${CONFIG_FILE} << EOFCONFIG
@@ -2012,7 +1987,6 @@ generate_config() {
     "level": "info",
     "timestamp": true
   },
-  "dns": ${dns_config},
   "inbounds": [${INBOUNDS_JSON}],
   "outbounds": ${outbounds},
   "route": ${route_json}
@@ -2025,9 +1999,13 @@ EOFCONFIG
 start_svc() {
     print_info "验证配置文件..."
     
+    # 调试：显示配置文件内容
+    echo -e "${YELLOW}[DEBUG] 配置文件内容:${NC}"
+    cat ${CONFIG_FILE}
+    echo ""
+    
     if ! ${INSTALL_DIR}/sing-box check -c ${CONFIG_FILE} 2>&1; then
         print_error "配置验证失败"
-        cat ${CONFIG_FILE}
         exit 1
     fi
     
