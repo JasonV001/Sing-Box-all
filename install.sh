@@ -502,15 +502,14 @@ regenerate_links_from_config() {
                     # 查找对应的 shadowsocks-in inbound
                     local ss_inbound=$(jq -c ".inbounds[] | select(.tag == \"shadowsocks-in-${port}\")" "${CONFIG_FILE}" 2>/dev/null)
                     local ss_password=$(echo "$ss_inbound" | jq -r '.password // ""' 2>/dev/null)
-                    local ss_port=$(echo "$ss_inbound" | jq -r '.listen_port // ""' 2>/dev/null)
                     local ss_method=$(echo "$ss_inbound" | jq -r '.method // "2022-blake3-aes-128-gcm"' 2>/dev/null)
                     
-                    if [[ -n "$ss_password" && -n "$ss_port" ]]; then
+                    if [[ -n "$ss_password" ]]; then
                         # URL 安全的 base64 编码
                         local ss_userinfo=$(echo -n "${ss_method}:${ss_password}" | base64 -w0 | sed 's/+/-/g; s/\//_/g; s/=//g')
                         local plugin_json="{\"version\":\"3\",\"password\":\"${shadowtls_password}\",\"host\":\"${sni}\",\"port\":\"${port}\",\"address\":\"${SERVER_IP}\"}"
                         local plugin_base64=$(echo -n "$plugin_json" | base64 -w0 | sed 's/+/-/g; s/\//_/g; s/=//g')
-                        local link="ss://${ss_userinfo}@${SERVER_IP}:${ss_port}?shadow-tls=${plugin_base64}#ShadowTLS-${SERVER_IP}"
+                        local link="ss://${ss_userinfo}@${SERVER_IP}:${port}?shadow-tls=${plugin_base64}#ShadowTLS-${SERVER_IP}"
                         
                         local line="[ShadowTLS v3] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n----------------------------------------\n\n"
                         ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}"
@@ -885,9 +884,6 @@ setup_shadowtls() {
     print_info "生成配置文件..."
     print_warning "ShadowTLS 通过伪装真实域名的TLS握手工作"
     
-    # ShadowTLS 需要一个内部 SS 端口
-    local SS_PORT=$((PORT + 10000))
-    
     local inbound="{
   \"type\": \"shadowtls\",
   \"tag\": \"shadowtls-in-${PORT}\",
@@ -906,7 +902,7 @@ setup_shadowtls() {
   \"type\": \"shadowsocks\",
   \"tag\": \"shadowsocks-in-${PORT}\",
   \"listen\": \"127.0.0.1\",
-  \"listen_port\": ${SS_PORT},
+  \"network\": \"tcp\",
   \"method\": \"2022-blake3-aes-128-gcm\",
   \"password\": \"${SS_PASSWORD}\"
 }"
@@ -920,7 +916,7 @@ setup_shadowtls() {
     local plugin_json="{\"version\":\"3\",\"password\":\"${SHADOWTLS_PASSWORD}\",\"host\":\"${SHADOWTLS_SNI}\",\"port\":\"${PORT}\",\"address\":\"${SERVER_IP}\"}"
     local plugin_base64=$(urlsafe_base64 "$plugin_json")
     
-    LINK="ss://${ss_userinfo}@${SERVER_IP}:${SS_PORT}?shadow-tls=${plugin_base64}#ShadowTLS-${SERVER_IP}"
+    LINK="ss://${ss_userinfo}@${SERVER_IP}:${PORT}?shadow-tls=${plugin_base64}#ShadowTLS-${SERVER_IP}"
     
     if [[ -z "$INBOUNDS_JSON" ]]; then
         INBOUNDS_JSON="$inbound"
