@@ -1907,26 +1907,89 @@ show_main_menu() {
     local relay_count=0
     local direct_count=0
     
+    # 统计每个中转被使用的次数
+    declare -A relay_usage
+    
     for relay_tag in "${INBOUND_RELAY_TAGS[@]}"; do
         if [[ "$relay_tag" == "direct" ]]; then
             ((direct_count++))
         else
             ((relay_count++))
+            if [[ -n "${relay_usage[$relay_tag]}" ]]; then
+                relay_usage[$relay_tag]=$((${relay_usage[$relay_tag]} + 1))
+            else
+                relay_usage[$relay_tag]=1
+            fi
         fi
     done
     
+    # 显示出站状态
     local outbound_desc
     if [[ $relay_count -gt 0 ]]; then
-        outbound_desc="混合 (直连:${direct_count} 中转:${relay_count})"
+        # 统计使用的中转协议类型
+        declare -A relay_proto_count
+        for relay_tag in "${!relay_usage[@]}"; do
+            # 从中转描述中提取协议类型
+            for i in "${!RELAY_TAGS[@]}"; do
+                if [[ "${RELAY_TAGS[$i]}" == "$relay_tag" ]]; then
+                    local proto=$(echo "${RELAY_DESCS[$i]}" | cut -d' ' -f1)
+                    if [[ -n "${relay_proto_count[$proto]}" ]]; then
+                        relay_proto_count[$proto]=$((${relay_proto_count[$proto]} + ${relay_usage[$relay_tag]}))
+                    else
+                        relay_proto_count[$proto]=${relay_usage[$relay_tag]}
+                    fi
+                    break
+                fi
+            done
+        done
+        
+        # 构建出站描述
+        local proto_list=""
+        for proto in "${!relay_proto_count[@]}"; do
+            [[ -n "$proto_list" ]] && proto_list+=", "
+            proto_list+="${proto}:${relay_proto_count[$proto]}"
+        done
+        
+        outbound_desc="混合 (直连:${direct_count} 中转:${relay_count} [${proto_list}])"
     else
         outbound_desc="全部直连"
     fi
     
     echo -e "  ${YELLOW}当前出站: ${GREEN}${outbound_desc}${NC}"
     
-    # 显示中转列表
+    # 显示中转列表详情
     if [[ ${#RELAY_TAGS[@]} -gt 0 ]]; then
-        echo -e "  ${YELLOW}中转列表: ${GREEN}${#RELAY_TAGS[@]} 个${NC}"
+        # 统计各协议中转数量
+        declare -A relay_type_count
+        for desc in "${RELAY_DESCS[@]}"; do
+            local proto=$(echo "$desc" | cut -d' ' -f1)
+            if [[ -n "${relay_type_count[$proto]}" ]]; then
+                relay_type_count[$proto]=$((${relay_type_count[$proto]} + 1))
+            else
+                relay_type_count[$proto]=1
+            fi
+        done
+        
+        # 构建中转列表描述
+        local relay_list=""
+        for proto in "${!relay_type_count[@]}"; do
+            [[ -n "$relay_list" ]] && relay_list+=", "
+            relay_list+="${proto}:${relay_type_count[$proto]}"
+        done
+        
+        echo -e "  ${YELLOW}中转列表: ${GREEN}${#RELAY_TAGS[@]} 个 [${relay_list}]${NC}"
+        
+        # 显示哪些节点在使用中转
+        if [[ $relay_count -gt 0 ]]; then
+            local relay_nodes=""
+            for i in "${!INBOUND_RELAY_TAGS[@]}"; do
+                if [[ "${INBOUND_RELAY_TAGS[$i]}" != "direct" ]]; then
+                    [[ -n "$relay_nodes" ]] && relay_nodes+=", "
+                    relay_nodes+="${INBOUND_PROTOS[$i]}:${INBOUND_PORTS[$i]}"
+                fi
+            done
+            echo -e "  ${CYAN}  └─ 使用中转: ${relay_nodes}${NC}"
+        fi
     fi
     
     # 统计各协议节点数
