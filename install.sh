@@ -44,6 +44,12 @@ SHADOWTLS_LINKS=""
 HTTPS_LINKS=""
 ANYTLS_LINKS=""
 
+# IP 配置
+SERVER_IPV6=""
+INBOUND_IP_MODE="ipv4"   # ipv4 或 ipv6，控制入站监听地址
+OUTBOUND_IP_MODE="ipv4"  # ipv4 或 ipv6，控制出站连接
+IP_CONFIG_FILE="/etc/sing-box/ip_config.conf"
+
 # 中转配置数组
 RELAY_TAGS=()        # 中转标签数组
 RELAY_JSONS=()       # 中转JSON配置数组
@@ -437,9 +443,9 @@ regenerate_links_from_config() {
                         
                         if [[ -n "$uuid" && -n "$pbk" ]]; then
                             local link="vless://${uuid}@${SERVER_IP}:${port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${sni}&fp=chrome&pbk=${pbk}&sid=${sid}&type=tcp#Reality-${SERVER_IP}"
-                            local line="[Reality] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n"
-                            ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
-                            REALITY_LINKS="${REALITY_LINKS}${line}\n"
+                            local line="[Reality] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n\n"
+                            ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}"
+                            REALITY_LINKS="${REALITY_LINKS}${line}"
                         fi
                     else
                         # HTTPS
@@ -451,9 +457,9 @@ regenerate_links_from_config() {
                         
                         if [[ -n "$uuid" ]]; then
                             local link="vless://${uuid}@${SERVER_IP}:${port}?encryption=none&security=tls&sni=${sni}&type=tcp&allowInsecure=1#HTTPS-${SERVER_IP}"
-                            local line="[HTTPS] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n"
-                            ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
-                            HTTPS_LINKS="${HTTPS_LINKS}${line}\n"
+                            local line="[HTTPS] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n\n"
+                            ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}"
+                            HTTPS_LINKS="${HTTPS_LINKS}${line}"
                         fi
                     fi
                 fi
@@ -466,9 +472,9 @@ regenerate_links_from_config() {
                 
                 if [[ -n "$password" ]]; then
                     local link="hysteria2://${password}@${SERVER_IP}:${port}?insecure=1&sni=${sni}&h2=#Hysteria2-${SERVER_IP}"
-                    local line="[Hysteria2] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n"
-                    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
-                    HYSTERIA2_LINKS="${HYSTERIA2_LINKS}${line}\n"
+                    local line="[Hysteria2] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n\n"
+                    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}"
+                    HYSTERIA2_LINKS="${HYSTERIA2_LINKS}${line}"
                 fi
                 ;;
             "socks")
@@ -483,9 +489,9 @@ regenerate_links_from_config() {
                 fi
                 
                 if [[ -n "$link" ]]; then
-                    local line="[SOCKS5] ${SERVER_IP}:${port}\n${link}\n"
-                    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
-                    SOCKS5_LINKS="${SOCKS5_LINKS}${line}\n"
+                    local line="[SOCKS5] ${SERVER_IP}:${port}\n${link}\n\n"
+                    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}"
+                    SOCKS5_LINKS="${SOCKS5_LINKS}${line}"
                 fi
                 ;;
             "shadowtls")
@@ -507,9 +513,9 @@ regenerate_links_from_config() {
                         local plugin_base64=$(echo -n "$plugin_json" | base64 -w0)
                         local link="ss://${ss_userinfo}@${SERVER_IP}:${port}?shadow-tls=${plugin_base64}#ShadowTLS-${SERVER_IP}"
                         
-                        local line="[ShadowTLS v3] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n"
-                        ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
-                        SHADOWTLS_LINKS="${SHADOWTLS_LINKS}${line}\n"
+                        local line="[ShadowTLS v3] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n\n"
+                        ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}"
+                        SHADOWTLS_LINKS="${SHADOWTLS_LINKS}${line}"
                     fi
                 fi
                 ;;
@@ -521,9 +527,9 @@ regenerate_links_from_config() {
                 
                 if [[ -n "$password" ]]; then
                     local link="anytls://${password}@${SERVER_IP}:${port}?security=tls&fp=chrome&insecure=1&sni=${sni}&type=tcp#AnyTLS-${SERVER_IP}"
-                    local line="[AnyTLS] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n"
-                    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
-                    ANYTLS_LINKS="${ANYTLS_LINKS}${line}\n"
+                    local line="[AnyTLS] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n\n"
+                    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}"
+                    ANYTLS_LINKS="${ANYTLS_LINKS}${line}"
                 fi
                 ;;
         esac
@@ -531,6 +537,24 @@ regenerate_links_from_config() {
     
     print_success "链接重新生成完成"
     save_links_to_files
+}
+
+# ==================== IP 配置管理 ====================
+save_ip_config() {
+    mkdir -p "$(dirname "${IP_CONFIG_FILE}")"
+    cat > "${IP_CONFIG_FILE}" << EOF
+# Sing-box IP 配置
+SERVER_IP="${SERVER_IP}"
+SERVER_IPV6="${SERVER_IPV6}"
+INBOUND_IP_MODE="${INBOUND_IP_MODE}"
+OUTBOUND_IP_MODE="${OUTBOUND_IP_MODE}"
+EOF
+}
+
+load_ip_config() {
+    if [[ -f "${IP_CONFIG_FILE}" ]]; then
+        source "${IP_CONFIG_FILE}"
+    fi
 }
 
 # ==================== 中转配置管理 ====================
@@ -610,15 +634,51 @@ regenerate_all_links() {
 
 # ==================== 网络工具 ====================
 get_ip() {
-    print_info "获取服务器 IP..."
-    SERVER_IP=$(curl -s4m5 ifconfig.me || curl -s4m5 api.ipify.org || curl -s4m5 ip.sb)
+    print_info "获取服务器 IP 地址..."
     
-    if [[ -z "$SERVER_IP" ]]; then
-        print_error "无法获取IP"
+    # 获取 IPv4
+    local ipv4=$(curl -s4m5 ifconfig.me 2>/dev/null || curl -s4m5 api.ipify.org 2>/dev/null || curl -s4m5 ip.sb 2>/dev/null)
+    
+    # 获取 IPv6
+    local ipv6=$(curl -s6m5 ifconfig.me 2>/dev/null || curl -s6m5 api6.ipify.org 2>/dev/null || curl -s6m5 ip.sb 2>/dev/null)
+    
+    # 显示检测到的 IP
+    echo ""
+    if [[ -n "$ipv4" ]]; then
+        echo -e "  ${GREEN}检测到 IPv4:${NC} ${ipv4}"
+    fi
+    if [[ -n "$ipv6" ]]; then
+        echo -e "  ${GREEN}检测到 IPv6:${NC} ${ipv6}"
+    fi
+    echo ""
+    
+    # 如果两个都没有，报错退出
+    if [[ -z "$ipv4" && -z "$ipv6" ]]; then
+        print_error "无法获取服务器 IP 地址"
         exit 1
     fi
     
-    print_success "服务器 IP: ${SERVER_IP}"
+    # 优先使用 IPv4，没有 IPv4 时使用 IPv6
+    if [[ -n "$ipv4" ]]; then
+        SERVER_IP="$ipv4"
+        SERVER_IPV6="$ipv6"
+        if [[ -n "$ipv6" ]]; then
+            print_success "检测到双栈网络，默认使用 IPv4: ${SERVER_IP}"
+            echo -e "${CYAN}提示: 可在主菜单 [出入站配置] 中切换 IPv6${NC}"
+        else
+            print_success "使用 IPv4: ${SERVER_IP}"
+        fi
+    elif [[ -n "$ipv6" ]]; then
+        SERVER_IP="$ipv6"
+        SERVER_IPV6=""
+        INBOUND_IP_MODE="ipv6"
+        OUTBOUND_IP_MODE="ipv6"
+        print_success "使用 IPv6: ${SERVER_IP}"
+        print_info "已自动设置出入站为 IPv6 模式"
+    fi
+    
+    # 保存 IP 配置
+    save_ip_config
 }
 
 check_port_in_use() {
@@ -694,9 +754,9 @@ setup_reality() {
     
     PROTO="Reality"
     EXTRA_INFO="UUID: ${UUID}\nPublic Key: ${REALITY_PUBLIC}\nShort ID: ${SHORT_ID}\nSNI: ${SNI}"
-    local line="[Reality] ${SERVER_IP}:${PORT} (SNI: ${SNI})\n${LINK}\n"
-    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
-    REALITY_LINKS="${REALITY_LINKS}${line}\n"
+    local line="[Reality] ${SERVER_IP}:${PORT} (SNI: ${SNI})\n${LINK}\n\n"
+    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}"
+    REALITY_LINKS="${REALITY_LINKS}${line}"
     
     INBOUND_TAGS+=("vless-in-${PORT}")
     INBOUND_PORTS+=("${PORT}")
@@ -747,9 +807,9 @@ setup_hysteria2() {
     LINK="hysteria2://${HY2_PASSWORD}@${SERVER_IP}:${PORT}?insecure=1&sni=${HY2_SNI}&h2=#Hysteria2-${SERVER_IP}"
     PROTO="Hysteria2"
     EXTRA_INFO="密码: ${HY2_PASSWORD}\n证书: 自签证书(${HY2_SNI})\nSNI: ${HY2_SNI}"
-    local line="[Hysteria2] ${SERVER_IP}:${PORT} (SNI: ${HY2_SNI})\n${LINK}\n"
-    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
-    HYSTERIA2_LINKS="${HYSTERIA2_LINKS}${line}\n"
+    local line="[Hysteria2] ${SERVER_IP}:${PORT} (SNI: ${HY2_SNI})\n${LINK}\n\n"
+    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}"
+    HYSTERIA2_LINKS="${HYSTERIA2_LINKS}${line}"
     
     INBOUND_TAGS+=("hy2-in-${PORT}")
     INBOUND_PORTS+=("${PORT}")
@@ -798,9 +858,9 @@ setup_socks5() {
     fi
     
     PROTO="SOCKS5"
-    local line="[SOCKS5] ${SERVER_IP}:${PORT}\n${LINK}\n"
-    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
-    SOCKS5_LINKS="${SOCKS5_LINKS}${line}\n"
+    local line="[SOCKS5] ${SERVER_IP}:${PORT}\n${LINK}\n\n"
+    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}"
+    SOCKS5_LINKS="${SOCKS5_LINKS}${line}"
     
     INBOUND_TAGS+=("socks-in-${PORT}")
     INBOUND_PORTS+=("${PORT}")
@@ -860,9 +920,9 @@ setup_shadowtls() {
     fi
     
     PROTO="ShadowTLS v3"
-    local line="[ShadowTLS v3] ${SERVER_IP}:${PORT} (SNI: ${SHADOWTLS_SNI})\n${LINK}\n"
-    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
-    SHADOWTLS_LINKS="${SHADOWTLS_LINKS}${line}\n"
+    local line="[ShadowTLS v3] ${SERVER_IP}:${PORT} (SNI: ${SHADOWTLS_SNI})\n${LINK}\n\n"
+    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}"
+    SHADOWTLS_LINKS="${SHADOWTLS_LINKS}${line}"
     EXTRA_INFO="Shadowsocks方法: 2022-blake3-aes-128-gcm\nShadowsocks密码: ${SS_PASSWORD}\nShadowTLS密码: ${SHADOWTLS_PASSWORD}\n伪装域名: ${SHADOWTLS_SNI}\n\n说明: 可直接复制链接导入 Shadowrocket、NekoBox、v2rayN 等客户端"
     
     INBOUND_TAGS+=("shadowtls-in-${PORT}")
@@ -914,9 +974,9 @@ setup_https() {
     
     PROTO="HTTPS"
     EXTRA_INFO="UUID: ${UUID}\n证书: 自签证书(${HTTPS_SNI})\nSNI: ${HTTPS_SNI}"
-    local line="[HTTPS] ${SERVER_IP}:${PORT} (SNI: ${HTTPS_SNI})\n${LINK}\n"
-    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
-    HTTPS_LINKS="${HTTPS_LINKS}${line}\n"
+    local line="[HTTPS] ${SERVER_IP}:${PORT} (SNI: ${HTTPS_SNI})\n${LINK}\n\n"
+    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}"
+    HTTPS_LINKS="${HTTPS_LINKS}${line}"
     
     INBOUND_TAGS+=("vless-tls-in-${PORT}")
     INBOUND_PORTS+=("${PORT}")
@@ -968,9 +1028,9 @@ setup_anytls() {
     
     PROTO="AnyTLS"
     EXTRA_INFO="密码: ${ANYTLS_PASSWORD}\n自签证书: ${ANYTLS_SNI}\nSNI: ${ANYTLS_SNI}"
-    local line="[AnyTLS] ${SERVER_IP}:${PORT} (SNI: ${ANYTLS_SNI})\n${LINK}\n"
-    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
-    ANYTLS_LINKS="${ANYTLS_LINKS}${line}\n"
+    local line="[AnyTLS] ${SERVER_IP}:${PORT} (SNI: ${ANYTLS_SNI})\n${LINK}\n\n"
+    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}"
+    ANYTLS_LINKS="${ANYTLS_LINKS}${line}"
     
     INBOUND_TAGS+=("anytls-in-${PORT}")
     INBOUND_PORTS+=("${PORT}")
@@ -1540,6 +1600,115 @@ setup_relay() {
     done
 }
 
+# ==================== 出入站 IP 配置菜单 ====================
+ip_config_menu() {
+    while true; do
+        clear
+        echo -e "${CYAN}╔═══════════════════════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║              ${GREEN}出入站 IP 配置${CYAN}                ║${NC}"
+        echo -e "${CYAN}╚═══════════════════════════════════════════════════════╝${NC}"
+        echo ""
+        echo -e "${YELLOW}当前配置:${NC}"
+        echo -e "  IPv4 地址: ${GREEN}${SERVER_IP}${NC}"
+        [[ -n "$SERVER_IPV6" ]] && echo -e "  IPv6 地址: ${GREEN}${SERVER_IPV6}${NC}"
+        echo -e "  入站模式: ${GREEN}${INBOUND_IP_MODE}${NC}"
+        echo -e "  出站模式: ${GREEN}${OUTBOUND_IP_MODE}${NC}"
+        echo ""
+        echo -e "${CYAN}说明:${NC}"
+        echo -e "  ${YELLOW}入站${NC}: 控制节点监听的 IP 版本（客户端连接到哪个 IP）"
+        echo -e "  ${YELLOW}出站${NC}: 控制服务器对外连接的 IP 版本（访问网站用哪个 IP）"
+        echo ""
+        echo -e "  ${GREEN}[1]${NC} 设置入站为 IPv4"
+        echo -e "  ${GREEN}[2]${NC} 设置入站为 IPv6"
+        echo -e "  ${GREEN}[3]${NC} 设置出站为 IPv4"
+        echo -e "  ${GREEN}[4]${NC} 设置出站为 IPv6"
+        echo -e "  ${GREEN}[5]${NC} 手动修改 IPv4 地址"
+        echo -e "  ${GREEN}[6]${NC} 手动修改 IPv6 地址"
+        echo -e "  ${GREEN}[0]${NC} 返回主菜单"
+        echo ""
+        read -p "请选择 [0-6]: " ip_choice
+        
+        case $ip_choice in
+            1)
+                INBOUND_IP_MODE="ipv4"
+                save_ip_config
+                print_success "入站已设置为 IPv4"
+                echo -e "${YELLOW}提示: 需要重新生成配置才能生效${NC}"
+                read -p "是否立即重新生成配置? (y/N): " regen
+                if [[ "$regen" =~ ^[Yy]$ ]] && [[ -n "$INBOUNDS_JSON" ]]; then
+                    generate_config && start_svc
+                fi
+                ;;
+            2)
+                if [[ -z "$SERVER_IPV6" ]]; then
+                    print_error "未检测到 IPv6 地址，请先手动设置"
+                    read -p "按回车继续..." _
+                    continue
+                fi
+                INBOUND_IP_MODE="ipv6"
+                save_ip_config
+                print_success "入站已设置为 IPv6"
+                echo -e "${YELLOW}提示: 需要重新生成配置才能生效${NC}"
+                read -p "是否立即重新生成配置? (y/N): " regen
+                if [[ "$regen" =~ ^[Yy]$ ]] && [[ -n "$INBOUNDS_JSON" ]]; then
+                    generate_config && start_svc
+                fi
+                ;;
+            3)
+                OUTBOUND_IP_MODE="ipv4"
+                save_ip_config
+                print_success "出站已设置为 IPv4"
+                echo -e "${YELLOW}提示: 需要重新生成配置才能生效${NC}"
+                read -p "是否立即重新生成配置? (y/N): " regen
+                if [[ "$regen" =~ ^[Yy]$ ]] && [[ -n "$INBOUNDS_JSON" ]]; then
+                    generate_config && start_svc
+                fi
+                ;;
+            4)
+                if [[ -z "$SERVER_IPV6" ]]; then
+                    print_error "未检测到 IPv6 地址，请先手动设置"
+                    read -p "按回车继续..." _
+                    continue
+                fi
+                OUTBOUND_IP_MODE="ipv6"
+                save_ip_config
+                print_success "出站已设置为 IPv6"
+                echo -e "${YELLOW}提示: 需要重新生成配置才能生效${NC}"
+                read -p "是否立即重新生成配置? (y/N): " regen
+                if [[ "$regen" =~ ^[Yy]$ ]] && [[ -n "$INBOUNDS_JSON" ]]; then
+                    generate_config && start_svc
+                fi
+                ;;
+            5)
+                read -p "请输入 IPv4 地址: " new_ipv4
+                if [[ -n "$new_ipv4" ]]; then
+                    SERVER_IP="$new_ipv4"
+                    save_ip_config
+                    print_success "IPv4 地址已更新: ${SERVER_IP}"
+                    echo -e "${YELLOW}提示: 需要重新生成链接文件${NC}"
+                fi
+                ;;
+            6)
+                read -p "请输入 IPv6 地址: " new_ipv6
+                if [[ -n "$new_ipv6" ]]; then
+                    SERVER_IPV6="$new_ipv6"
+                    save_ip_config
+                    print_success "IPv6 地址已更新: ${SERVER_IPV6}"
+                    echo -e "${YELLOW}提示: 需要重新生成链接文件${NC}"
+                fi
+                ;;
+            0)
+                break
+                ;;
+            *)
+                print_error "无效选项"
+                ;;
+        esac
+        
+        [[ "$ip_choice" != "0" ]] && read -p "按回车继续..." _
+    done
+}
+
 clear_relay() {
     echo ""
     read -p "确认删除全部中转配置并恢复直连? (y/N): " confirm
@@ -1759,8 +1928,14 @@ generate_config() {
         outbounds_array+=("$relay_json")
     done
     
-    # 添加 direct outbound
-    outbounds_array+=('{"type": "direct", "tag": "direct"}')
+    # 添加 direct outbound（根据出站 IP 模式设置）
+    local direct_outbound
+    if [[ "$OUTBOUND_IP_MODE" == "ipv6" ]]; then
+        direct_outbound='{"type": "direct", "tag": "direct", "domain_strategy": "prefer_ipv6"}'
+    else
+        direct_outbound='{"type": "direct", "tag": "direct", "domain_strategy": "prefer_ipv4"}'
+    fi
+    outbounds_array+=("$direct_outbound")
     
     # 组合 outbounds
     local outbounds="["
@@ -1924,6 +2099,17 @@ show_main_menu() {
     echo -e "${CYAN}╚═══════════════════════════════════════════════════════╝${NC}"
     echo ""
     
+    # 显示出入站配置
+    echo -e "${YELLOW}当前出入站配置:${NC}"
+    if [[ -n "$SERVER_IP" ]]; then
+        echo -e "  IPv4 地址: ${GREEN}${SERVER_IP}${NC}"
+    fi
+    if [[ -n "$SERVER_IPV6" ]]; then
+        echo -e "  IPv6 地址: ${GREEN}${SERVER_IPV6}${NC}"
+    fi
+    echo -e "  ${CYAN}└─${NC} 入站模式: ${GREEN}${INBOUND_IP_MODE}${NC}     出站模式: ${GREEN}${OUTBOUND_IP_MODE}${NC}"
+    echo ""
+    
     # 统计中转使用情况
     local relay_count=0
     local direct_count=0
@@ -2050,9 +2236,9 @@ show_main_menu() {
     echo ""
     echo -e "  ${GREEN}[1]${NC} 添加/继续添加节点"
     echo ""
-    echo -e "  ${GREEN}[2]${NC} 设置中转 (SOCKS5 / HTTP(S))"
+    echo -e "  ${GREEN}[2]${NC} 中转配置 (添加/配置/删除)"
     echo ""
-    echo -e "  ${GREEN}[3]${NC} 删除中转，恢复直连"
+    echo -e "  ${GREEN}[3]${NC} 出入站配置 (IPv4/IPv6)"
     echo ""
     echo -e "  ${GREEN}[4]${NC} 配置 / 查看节点"
     echo ""
@@ -2339,7 +2525,7 @@ main_menu() {
                 setup_relay
                 ;;
             3)
-                clear_relay
+                ip_config_menu
                 ;;
             4)
                 config_and_view_menu
@@ -2393,6 +2579,9 @@ main() {
     gen_keys
     get_ip
     setup_sb_shortcut
+    
+    # 加载 IP 配置
+    load_ip_config
     
     # 从配置文件加载节点信息
     if [[ -f "${CONFIG_FILE}" ]]; then
