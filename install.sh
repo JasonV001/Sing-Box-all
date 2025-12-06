@@ -2651,11 +2651,16 @@ main() {
     install_singbox
     mkdir -p /etc/sing-box
     gen_keys
-    get_ip
-    setup_sb_shortcut
     
-    # 加载 IP 配置
+    # 先加载 IP 配置（如果存在）
     load_ip_config
+    
+    # 如果没有 IP 配置，则获取 IP
+    if [[ -z "${SERVER_IP}" ]]; then
+        get_ip
+    fi
+    
+    setup_sb_shortcut
     
     # 从配置文件加载节点信息
     if [[ -f "${CONFIG_FILE}" ]]; then
