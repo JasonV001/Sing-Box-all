@@ -658,22 +658,24 @@ get_ip() {
         exit 1
     fi
     
-    # 如果只有一个，直接使用
-    if [[ -n "$ipv4" && -z "$ipv6" ]]; then
+    # 优先使用 IPv4，没有 IPv4 时使用 IPv6
+    if [[ -n "$ipv4" ]]; then
         SERVER_IP="$ipv4"
-        print_success "使用 IPv4: ${SERVER_IP}"
-        return 0
-    elif [[ -z "$ipv4" && -n "$ipv6" ]]; then
+        SERVER_IPV6="$ipv6"
+        if [[ -n "$ipv6" ]]; then
+            print_success "检测到双栈网络，默认使用 IPv4: ${SERVER_IP}"
+            echo -e "${CYAN}提示: 可在主菜单 [出入站配置] 中切换 IPv6${NC}"
+        else
+            print_success "使用 IPv4: ${SERVER_IP}"
+        fi
+    elif [[ -n "$ipv6" ]]; then
         SERVER_IP="$ipv6"
+        SERVER_IPV6=""
+        INBOUND_IP_MODE="ipv6"
+        OUTBOUND_IP_MODE="ipv6"
         print_success "使用 IPv6: ${SERVER_IP}"
-        return 0
+        print_info "已自动设置出入站为 IPv6 模式"
     fi
-    
-    # 如果两个都有，默认使用 IPv4
-    SERVER_IP="$ipv4"
-    SERVER_IPV6="$ipv6"
-    print_success "检测到双栈网络，默认使用 IPv4: ${SERVER_IP}"
-    echo -e "${CYAN}提示: 可在主菜单 [出入站配置] 中切换 IPv6 或修改 IP${NC}"
     
     # 保存 IP 配置
     save_ip_config
@@ -2095,6 +2097,17 @@ show_main_menu() {
     echo -e "${CYAN}╔═══════════════════════════════════════════════════════╗${NC}"
     echo -e "${CYAN}║          ${GREEN}Sing-Box 一键管理面板${CYAN}          ║${NC}"
     echo -e "${CYAN}╚═══════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    
+    # 显示出入站配置
+    echo -e "${YELLOW}当前出入站配置:${NC}"
+    if [[ -n "$SERVER_IP" ]]; then
+        echo -e "  IPv4 地址: ${GREEN}${SERVER_IP}${NC}"
+    fi
+    if [[ -n "$SERVER_IPV6" ]]; then
+        echo -e "  IPv6 地址: ${GREEN}${SERVER_IPV6}${NC}"
+    fi
+    echo -e "  ${CYAN}└─${NC} 入站模式: ${GREEN}${INBOUND_IP_MODE}${NC}     出站模式: ${GREEN}${OUTBOUND_IP_MODE}${NC}"
     echo ""
     
     # 统计中转使用情况
