@@ -207,12 +207,12 @@ gen_keys() {
     REALITY_PUBLIC=$(echo "$KEYS" | grep "PublicKey" | awk '{print $2}')
     UUID=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen)
     SHORT_ID=$(openssl rand -hex 8)
-    HY2_PASSWORD=$(openssl rand -base64 16)
-    SS_PASSWORD=$(openssl rand -base64 32)
+    HY2_PASSWORD=$(openssl rand -hex 16)
+    SS_PASSWORD=$(openssl rand -hex 32)
     SHADOWTLS_PASSWORD=$(openssl rand -hex 16)
-    ANYTLS_PASSWORD=$(openssl rand -base64 16)
+    ANYTLS_PASSWORD=$(openssl rand -hex 16)
     SOCKS_USER="user_$(openssl rand -hex 4)"
-    SOCKS_PASS=$(openssl rand -base64 12)
+    SOCKS_PASS=$(openssl rand -hex 16)
     
     save_keys_to_file
     
@@ -468,6 +468,7 @@ regenerate_links_from_config() {
                 [[ -z "$sni" ]] && sni="${DEFAULT_SNI}"
                 
                 if [[ -n "$password" ]]; then
+                    # Hex 密码不需要 URL 编码
                     local link="hysteria2://${password}@${SERVER_IP}:${port}?insecure=1&sni=${sni}#Hysteria2-${SERVER_IP}"
                     local line="[Hysteria2] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n----------------------------------------\n\n"
                     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}"
@@ -801,6 +802,7 @@ setup_hysteria2() {
         INBOUNDS_JSON="${INBOUNDS_JSON},${inbound}"
     fi
     
+    # Hex 密码不需要 URL 编码
     LINK="hysteria2://${HY2_PASSWORD}@${SERVER_IP}:${PORT}?insecure=1&sni=${HY2_SNI}#Hysteria2-${SERVER_IP}"
     PROTO="Hysteria2"
     EXTRA_INFO="密码: ${HY2_PASSWORD}\n证书: 自签证书(${HY2_SNI})\nSNI: ${HY2_SNI}"
