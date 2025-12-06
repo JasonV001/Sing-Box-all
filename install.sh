@@ -1868,11 +1868,34 @@ delete_all_nodes() {
     INBOUND_SNIS=()
     INBOUND_RELAY_TAGS=()
     
-    cat > ${CONFIG_FILE} << 'EOFCONFIG'
+    # 根据出站模式设置 DNS 策略
+    local dns_strategy="prefer_ipv4"
+    [[ "$OUTBOUND_IP_MODE" == "ipv6" ]] && dns_strategy="prefer_ipv6"
+    
+    cat > ${CONFIG_FILE} << EOFCONFIG
 {
   "log": {
     "level": "info",
     "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "tag": "dns-direct",
+        "address": "local",
+        "detour": "direct"
+      },
+      {
+        "tag": "dns-remote",
+        "address": "8.8.8.8",
+        "address_resolver": "dns-direct",
+        "address_strategy": "${dns_strategy}",
+        "detour": "direct"
+      }
+    ],
+    "rules": [],
+    "strategy": "${dns_strategy}",
+    "independent_cache": true
   },
   "inbounds": [],
   "outbounds": [
@@ -1882,7 +1905,8 @@ delete_all_nodes() {
     }
   ],
   "route": {
-    "final": "direct"
+    "final": "direct",
+    "default_domain_resolver": "dns-direct"
   }
 }
 EOFCONFIG
@@ -1961,9 +1985,9 @@ generate_config() {
             [[ $i -gt 0 ]] && route_json+=","
             route_json+="${route_rules[$i]}"
         done
-        route_json+="],\"final\":\"direct\"}"
+        route_json+="],\"final\":\"direct\",\"default_domain_resolver\":\"dns-direct\"}"
     else
-        route_json='{"final":"direct"}'
+        route_json="{\"final\":\"direct\",\"default_domain_resolver\":\"dns-direct\"}"
     fi
     
     # 构建 DNS 配置（根据出站 IP 模式）
@@ -1978,8 +2002,9 @@ generate_config() {
       },
       {
         "tag": "dns-remote",
-        "address": "tls://8.8.8.8",
+        "address": "8.8.8.8",
         "address_resolver": "dns-direct",
+        "address_strategy": "prefer_ipv6",
         "detour": "direct"
       }
     ],
@@ -1997,8 +2022,9 @@ generate_config() {
       },
       {
         "tag": "dns-remote",
-        "address": "tls://8.8.8.8",
+        "address": "8.8.8.8",
         "address_resolver": "dns-direct",
+        "address_strategy": "prefer_ipv4",
         "detour": "direct"
       }
     ],
