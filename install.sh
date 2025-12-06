@@ -1619,11 +1619,12 @@ ip_config_menu() {
         echo -e "  ${GREEN}[2]${NC} 设置入站为 IPv6"
         echo -e "  ${GREEN}[3]${NC} 设置出站为 IPv4"
         echo -e "  ${GREEN}[4]${NC} 设置出站为 IPv6"
-        echo -e "  ${GREEN}[5]${NC} 手动修改 IPv4 地址"
-        echo -e "  ${GREEN}[6]${NC} 手动修改 IPv6 地址"
+        echo -e "  ${GREEN}[5]${NC} 设置出站为双栈 (IPv4+IPv6)"
+        echo -e "  ${GREEN}[6]${NC} 手动修改 IPv4 地址"
+        echo -e "  ${GREEN}[7]${NC} 手动修改 IPv6 地址"
         echo -e "  ${GREEN}[0]${NC} 返回主菜单"
         echo ""
-        read -p "请选择 [0-6]: " ip_choice
+        read -p "请选择 [0-7]: " ip_choice
         
         case $ip_choice in
             1)
@@ -1677,6 +1678,17 @@ ip_config_menu() {
                 fi
                 ;;
             5)
+                OUTBOUND_IP_MODE="dual"
+                save_ip_config
+                print_success "出站已设置为双栈 (IPv4+IPv6)"
+                echo -e "${YELLOW}提示: 双栈模式将同时使用 IPv4 和 IPv6，由系统自动选择${NC}"
+                echo -e "${YELLOW}提示: 需要重新生成配置才能生效${NC}"
+                read -p "是否立即重新生成配置? (y/N): " regen
+                if [[ "$regen" =~ ^[Yy]$ ]] && [[ -n "$INBOUNDS_JSON" ]]; then
+                    generate_config && start_svc
+                fi
+                ;;
+            6)
                 read -p "请输入 IPv4 地址: " new_ipv4
                 if [[ -n "$new_ipv4" ]]; then
                     SERVER_IP="$new_ipv4"
@@ -1685,7 +1697,7 @@ ip_config_menu() {
                     echo -e "${YELLOW}提示: 需要重新生成链接文件${NC}"
                 fi
                 ;;
-            6)
+            7)
                 read -p "请输入 IPv6 地址: " new_ipv6
                 if [[ -n "$new_ipv6" ]]; then
                     SERVER_IPV6="$new_ipv6"
@@ -1999,6 +2011,20 @@ generate_config() {
     ],
     "final": "remote",
     "strategy": "prefer_ipv6"
+  }'
+    elif [[ "$OUTBOUND_IP_MODE" == "dual" ]]; then
+        dns_json='{
+    "servers": [
+      {
+        "tag": "local",
+        "address": "local"
+      },
+      {
+        "tag": "remote",
+        "address": "8.8.8.8"
+      }
+    ],
+    "final": "remote"
   }'
     else
         dns_json='{
