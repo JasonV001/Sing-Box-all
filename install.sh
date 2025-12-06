@@ -208,7 +208,7 @@ gen_keys() {
     UUID=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen)
     SHORT_ID=$(openssl rand -hex 8)
     HY2_PASSWORD=$(openssl rand -hex 16)
-    SS_PASSWORD=$(openssl rand -hex 32)
+    SS_PASSWORD=$(openssl rand -base64 16)  # SS 2022 需要 base64 格式
     SHADOWTLS_PASSWORD=$(openssl rand -hex 16)
     ANYTLS_PASSWORD=$(openssl rand -hex 16)
     SOCKS_USER="user_$(openssl rand -hex 4)"
@@ -1053,7 +1053,7 @@ setup_shadowtls() {
 }
 EOFCLIENT
     
-    EXTRA_INFO="Shadowsocks方法: 2022-blake3-aes-128-gcm\nShadowsocks密码: ${SS_PASSWORD}\nShadowTLS密码: ${SHADOWTLS_PASSWORD}\n伪装域名: ${SHADOWTLS_SNI}\n\n${YELLOW}重要提示:${NC}\n- 链接格式仅支持 Shadowrocket 等客户端\n- NekoBox/Sing-box 客户端请使用配置文件: ${client_config_file}\n- 配置文件导入方法: 配置 -> 从文件导入配置"
+    EXTRA_INFO="Shadowsocks方法: 2022-blake3-aes-128-gcm\nShadowsocks密码: ${SS_PASSWORD}\nShadowTLS密码: ${SHADOWTLS_PASSWORD}\n伪装域名: ${SHADOWTLS_SNI}\n\n${RED}重要: ShadowTLS 不支持链接格式！${NC}\n${YELLOW}请使用客户端配置文件:${NC}\n  ${client_config_file}\n\n${CYAN}下载命令:${NC}\n  scp root@${SERVER_IP}:${client_config_file} ./\n\n${CYAN}或直接查看:${NC}\n  cat ${client_config_file}"
     
     INBOUND_TAGS+=("shadowtls-in-${PORT}")
     INBOUND_PORTS+=("${PORT}")
