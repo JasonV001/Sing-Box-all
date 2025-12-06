@@ -14,7 +14,6 @@ PURPLE='\033[0;35m'
 NC='\033[0m'
 
 # ==================== 路径配置 ====================
-AUTHOR_BLOG="${SERVER_IP}"
 CONFIG_FILE="/etc/sing-box/config.json"
 INSTALL_DIR="/usr/local/bin"
 CERT_DIR="/etc/sing-box/certs"
@@ -35,8 +34,8 @@ SCRIPT_PATH=$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo 
 
 # ==================== 全局变量 ====================
 INBOUNDS_JSON=""
-OUTBOUND_TAG="direct"
 ALL_LINKS_TEXT=""
+SERVER_IP=""
 REALITY_LINKS=""
 HYSTERIA2_LINKS=""
 SOCKS5_LINKS=""
@@ -62,8 +61,6 @@ INBOUND_PORTS=()
 INBOUND_PROTOS=()
 INBOUND_RELAY_TAGS=()  # 存储每个节点使用的中转标签，"direct" 表示直连
 INBOUND_SNIS=()
-
-RELAY_JSON=""
 
 # 密钥变量
 UUID=""
