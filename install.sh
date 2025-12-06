@@ -1080,6 +1080,9 @@ parse_socks_link() {
         fi
         
         local tag="relay-socks5-${#RELAY_TAGS[@]}"
+        local domain_strategy="prefer_ipv4"
+        [[ "$OUTBOUND_IP_MODE" == "ipv6" ]] && domain_strategy="prefer_ipv6"
+        
         relay_json="{
   \"type\": \"socks\",
   \"tag\": \"${tag}\",
@@ -1087,7 +1090,8 @@ parse_socks_link() {
   \"server_port\": ${port},
   \"version\": \"5\",
   \"username\": \"${username}\",
-  \"password\": \"${password}\"
+  \"password\": \"${password}\",
+  \"domain_strategy\": \"${domain_strategy}\"
 }"
         relay_desc="SOCKS5 ${server}:${port} (认证)"
     else
@@ -1101,12 +1105,16 @@ parse_socks_link() {
         fi
         
         local tag="relay-socks5-${#RELAY_TAGS[@]}"
+        local domain_strategy="prefer_ipv4"
+        [[ "$OUTBOUND_IP_MODE" == "ipv6" ]] && domain_strategy="prefer_ipv6"
+        
         relay_json="{
   \"type\": \"socks\",
   \"tag\": \"${tag}\",
   \"server\": \"${server}\",
   \"server_port\": ${port},
-  \"version\": \"5\"
+  \"version\": \"5\",
+  \"domain_strategy\": \"${domain_strategy}\"
 }"
         relay_desc="SOCKS5 ${server}:${port}"
     fi
@@ -1140,6 +1148,9 @@ parse_http_link() {
         local server=$(echo "$server_port" | cut -d':' -f1)
         local port=$(echo "$server_port" | cut -d':' -f2 | cut -d'/' -f1 | cut -d'#' -f1 | cut -d'?' -f1)
         
+        local domain_strategy="prefer_ipv4"
+        [[ "$OUTBOUND_IP_MODE" == "ipv6" ]] && domain_strategy="prefer_ipv6"
+        
         relay_json="{
   \"type\": \"http\",
   \"tag\": \"${tag}\",
@@ -1147,19 +1158,24 @@ parse_http_link() {
   \"server_port\": ${port},
   \"username\": \"${username}\",
   \"password\": \"${password}\",
-  \"tls\": {\"enabled\": ${tls}}
+  \"tls\": {\"enabled\": ${tls}},
+  \"domain_strategy\": \"${domain_strategy}\"
 }"
         relay_desc="${protocol^^} ${server}:${port} (认证)"
     else
         local server=$(echo "$data" | cut -d':' -f1)
         local port=$(echo "$data" | cut -d':' -f2 | cut -d'/' -f1 | cut -d'#' -f1 | cut -d'?' -f1)
         
+        local domain_strategy="prefer_ipv4"
+        [[ "$OUTBOUND_IP_MODE" == "ipv6" ]] && domain_strategy="prefer_ipv6"
+        
         relay_json="{
   \"type\": \"http\",
   \"tag\": \"${tag}\",
   \"server\": \"${server}\",
   \"server_port\": ${port},
-  \"tls\": {\"enabled\": ${tls}}
+  \"tls\": {\"enabled\": ${tls}},
+  \"domain_strategy\": \"${domain_strategy}\"
 }"
         relay_desc="${protocol^^} ${server}:${port}"
     fi
@@ -1192,13 +1208,17 @@ parse_ss_link() {
         local password=$(echo "$decoded" | cut -d':' -f2-)
         
         local tag="relay-ss-${#RELAY_TAGS[@]}"
+        local domain_strategy="prefer_ipv4"
+        [[ "$OUTBOUND_IP_MODE" == "ipv6" ]] && domain_strategy="prefer_ipv6"
+        
         local relay_json="{
   \"type\": \"shadowsocks\",
   \"tag\": \"${tag}\",
   \"server\": \"${server}\",
   \"server_port\": ${port},
   \"method\": \"${method}\",
-  \"password\": \"${password}\"
+  \"password\": \"${password}\",
+  \"domain_strategy\": \"${domain_strategy}\"
 }"
         local relay_desc="Shadowsocks ${server}:${port}"
         
@@ -1931,9 +1951,9 @@ generate_config() {
     # 添加 direct outbound（根据出站 IP 模式设置）
     local direct_outbound
     if [[ "$OUTBOUND_IP_MODE" == "ipv6" ]]; then
-        direct_outbound='{"type": "direct", "tag": "direct"}'
+        direct_outbound='{"type": "direct", "tag": "direct", "domain_strategy": "prefer_ipv6"}'
     else
-        direct_outbound='{"type": "direct", "tag": "direct"}'
+        direct_outbound='{"type": "direct", "tag": "direct", "domain_strategy": "prefer_ipv4"}'
     fi
     outbounds_array+=("$direct_outbound")
     
