@@ -217,7 +217,7 @@ gen_keys() {
 save_keys_to_file() {
     mkdir -p "$(dirname "${KEY_FILE}")"
     
-    cat > "${KEY_FILE}" << 'EOF'
+    cat > "${KEY_FILE}" << EOF
 UUID="${UUID}"
 REALITY_PRIVATE="${REALITY_PRIVATE}"
 REALITY_PUBLIC="${REALITY_PUBLIC}"
@@ -229,17 +229,6 @@ ANYTLS_PASSWORD="${ANYTLS_PASSWORD}"
 SOCKS_USER="${SOCKS_USER}"
 SOCKS_PASS="${SOCKS_PASS}"
 EOF
-    
-    sed -i "s/\${UUID}/${UUID}/g" "${KEY_FILE}"
-    sed -i "s/\${REALITY_PRIVATE}/${REALITY_PRIVATE}/g" "${KEY_FILE}"
-    sed -i "s/\${REALITY_PUBLIC}/${REALITY_PUBLIC}/g" "${KEY_FILE}"
-    sed -i "s/\${SHORT_ID}/${SHORT_ID}/g" "${KEY_FILE}"
-    sed -i "s/\${HY2_PASSWORD}/${HY2_PASSWORD}/g" "${KEY_FILE}"
-    sed -i "s/\${SS_PASSWORD}/${SS_PASSWORD}/g" "${KEY_FILE}"
-    sed -i "s/\${SHADOWTLS_PASSWORD}/${SHADOWTLS_PASSWORD}/g" "${KEY_FILE}"
-    sed -i "s/\${ANYTLS_PASSWORD}/${ANYTLS_PASSWORD}/g" "${KEY_FILE}"
-    sed -i "s/\${SOCKS_USER}/${SOCKS_USER}/g" "${KEY_FILE}"
-    sed -i "s/\${SOCKS_PASS}/${SOCKS_PASS}/g" "${KEY_FILE}"
     
     chmod 600 "${KEY_FILE}"
     print_success "密钥已保存到 ${KEY_FILE}"
