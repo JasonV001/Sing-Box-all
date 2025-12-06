@@ -341,6 +341,160 @@ load_inbounds_from_config() {
     return 0
 }
 
+# 从配置文件重新生成链接
+regenerate_links_from_config() {
+    print_info "正在从配置文件重新生成链接..."
+    
+    # 清空所有链接变量
+    ALL_LINKS_TEXT=""
+    REALITY_LINKS=""
+    HYSTERIA2_LINKS=""
+    SOCKS5_LINKS=""
+    SHADOWTLS_LINKS=""
+    HTTPS_LINKS=""
+    ANYTLS_LINKS=""
+    
+    # 加载密钥文件
+    if [[ -f "${KEY_FILE}" ]]; then
+        source "${KEY_FILE}"
+    fi
+    
+    # 确保 SERVER_IP 已设置
+    if [[ -z "${SERVER_IP}" ]]; then
+        get_ip
+    fi
+    
+    if [[ ! -f "${CONFIG_FILE}" ]] || ! command -v jq &>/dev/null; then
+        print_warning "无法重新生成链接：配置文件不存在或 jq 未安装"
+        return 1
+    fi
+    
+    local inbounds_count=$(jq '.inbounds | length' "${CONFIG_FILE}" 2>/dev/null || echo "0")
+    
+    if [[ "$inbounds_count" -eq 0 ]]; then
+        print_warning "配置文件中没有找到节点"
+        return 1
+    fi
+    
+    # 遍历每个inbound生成链接
+    for ((i=0; i<inbounds_count; i++)); do
+        local inbound=$(jq -c ".inbounds[${i}]" "${CONFIG_FILE}" 2>/dev/null)
+        
+        if [[ -z "$inbound" ]]; then
+            continue
+        fi
+        
+        local type=$(echo "$inbound" | jq -r '.type' 2>/dev/null)
+        local port=$(echo "$inbound" | jq -r '.listen_port' 2>/dev/null)
+        local tag=$(echo "$inbound" | jq -r '.tag' 2>/dev/null)
+        
+        if [[ -z "$type" || -z "$port" ]]; then
+            continue
+        fi
+        
+        # 根据类型生成链接
+        case "$type" in
+            "vless")
+                local tls_enabled=$(echo "$inbound" | jq -r '.tls.enabled // false' 2>/dev/null)
+                if [[ "$tls_enabled" == "true" ]]; then
+                    local reality_enabled=$(echo "$inbound" | jq -r '.tls.reality.enabled // false' 2>/dev/null)
+                    if [[ "$reality_enabled" == "true" ]]; then
+                        # Reality
+                        local uuid=$(echo "$inbound" | jq -r '.users[0].uuid // ""' 2>/dev/null)
+                        local sni=$(echo "$inbound" | jq -r '.tls.server_name // ""' 2>/dev/null)
+                        local pbk=$(echo "$inbound" | jq -r '.tls.reality.public_key // ""' 2>/dev/null)
+                        local sid=$(echo "$inbound" | jq -r '.tls.reality.short_id[0] // ""' 2>/dev/null)
+                        
+                        [[ -z "$uuid" && -n "${UUID}" ]] && uuid="${UUID}"
+                        [[ -z "$pbk" && -n "${REALITY_PUBLIC}" ]] && pbk="${REALITY_PUBLIC}"
+                        [[ -z "$sid" && -n "${SHORT_ID}" ]] && sid="${SHORT_ID}"
+                        [[ -z "$sni" ]] && sni="${DEFAULT_SNI}"
+                        
+                        if [[ -n "$uuid" && -n "$pbk" ]]; then
+                            local link="vless://${uuid}@${SERVER_IP}:${port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${sni}&fp=chrome&pbk=${pbk}&sid=${sid}&type=tcp#Reality-${SERVER_IP}"
+                            local line="[Reality] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n"
+                            ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
+                            REALITY_LINKS="${REALITY_LINKS}${line}\n"
+                        fi
+                    else
+                        # HTTPS
+                        local uuid=$(echo "$inbound" | jq -r '.users[0].uuid // ""' 2>/dev/null)
+                        local sni=$(echo "$inbound" | jq -r '.tls.server_name // ""' 2>/dev/null)
+                        
+                        [[ -z "$uuid" && -n "${UUID}" ]] && uuid="${UUID}"
+                        [[ -z "$sni" ]] && sni="${DEFAULT_SNI}"
+                        
+                        if [[ -n "$uuid" ]]; then
+                            local link="vless://${uuid}@${SERVER_IP}:${port}?encryption=none&security=tls&sni=${sni}&type=tcp&allowInsecure=1#HTTPS-${SERVER_IP}"
+                            local line="[HTTPS] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n"
+                            ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
+                            HTTPS_LINKS="${HTTPS_LINKS}${line}\n"
+                        fi
+                    fi
+                fi
+                ;;
+            "hysteria2")
+                local password=$(echo "$inbound" | jq -r '.users[0].password // ""' 2>/dev/null)
+                local sni=$(echo "$inbound" | jq -r '.tls.server_name // ""' 2>/dev/null)
+                
+                [[ -z "$sni" ]] && sni="${DEFAULT_SNI}"
+                
+                if [[ -n "$password" ]]; then
+                    local link="hy2://${password}@${SERVER_IP}:${port}?sni=${sni}&alpn=h3&insecure=1#Hy2-${SERVER_IP}"
+                    local line="[Hysteria2] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n"
+                    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
+                    HYSTERIA2_LINKS="${HYSTERIA2_LINKS}${line}\n"
+                fi
+                ;;
+            "socks")
+                local username=$(echo "$inbound" | jq -r '.users[0].username // ""' 2>/dev/null)
+                local password=$(echo "$inbound" | jq -r '.users[0].password // ""' 2>/dev/null)
+                local link=""
+                
+                if [[ -n "$username" && -n "$password" ]]; then
+                    link="socks5://${username}:${password}@${SERVER_IP}:${port}#SOCKS5-${SERVER_IP}"
+                else
+                    link="socks5://${SERVER_IP}:${port}#SOCKS5-${SERVER_IP}"
+                fi
+                
+                if [[ -n "$link" ]]; then
+                    local line="[SOCKS5] ${SERVER_IP}:${port}\n${link}\n"
+                    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
+                    SOCKS5_LINKS="${SOCKS5_LINKS}${line}\n"
+                fi
+                ;;
+            "shadowtls")
+                local password=$(echo "$inbound" | jq -r '.users[0].password // ""' 2>/dev/null)
+                local sni=$(echo "$inbound" | jq -r '.handshake.server // ""' 2>/dev/null)
+                
+                [[ -z "$sni" ]] && sni="${DEFAULT_SNI}"
+                
+                if [[ -n "$password" ]]; then
+                    local line="[ShadowTLS v3] ${SERVER_IP}:${port} (SNI: ${sni}) (需要查看配置获取完整信息)\n"
+                    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
+                    SHADOWTLS_LINKS="${SHADOWTLS_LINKS}${line}\n"
+                fi
+                ;;
+            "anytls")
+                local password=$(echo "$inbound" | jq -r '.users[0].password // ""' 2>/dev/null)
+                local sni=$(echo "$inbound" | jq -r '.tls.server_name // ""' 2>/dev/null)
+                
+                [[ -z "$sni" ]] && sni="${DEFAULT_SNI}"
+                
+                if [[ -n "$password" ]]; then
+                    local link="anytls://${password}@${SERVER_IP}:${port}?security=tls&fp=chrome&insecure=1&sni=${sni}&type=tcp#AnyTLS-${SERVER_IP}"
+                    local line="[AnyTLS] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n"
+                    ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
+                    ANYTLS_LINKS="${ANYTLS_LINKS}${line}\n"
+                fi
+                ;;
+        esac
+    done
+    
+    print_success "链接重新生成完成"
+    save_links_to_files
+}
+
 cleanup_links() {
     print_info "清理所有链接文件..."
     rm -rf "${LINK_DIR}" 2>/dev/null || true
@@ -490,7 +644,7 @@ setup_hysteria2() {
         INBOUNDS_JSON="${INBOUNDS_JSON},${inbound}"
     fi
     
-    LINK="hysteria2://${HY2_PASSWORD}@${SERVER_IP}:${PORT}?insecure=1&sni=${HY2_SNI}#Hysteria2-${SERVER_IP}"
+    LINK="hy2://${HY2_PASSWORD}@${SERVER_IP}:${PORT}?sni=${HY2_SNI}&alpn=h3&insecure=1#Hy2-${SERVER_IP}"
     PROTO="Hysteria2"
     EXTRA_INFO="密码: ${HY2_PASSWORD}\n证书: 自签证书(${HY2_SNI})\nSNI: ${HY2_SNI}"
     local line="[Hysteria2] ${SERVER_IP}:${PORT} (SNI: ${HY2_SNI})\n${LINK}\n"
@@ -1018,6 +1172,10 @@ delete_single_node() {
         
         # 重新加载配置
         load_inbounds_from_config
+        
+        # 重新生成链接文件
+        print_info "重新生成链接文件..."
+        regenerate_links_from_config
         
         # 重启服务
         print_info "重启服务..."
@@ -1636,7 +1794,5 @@ main() {
     
     main_menu
 }
-
-main
 
 main
