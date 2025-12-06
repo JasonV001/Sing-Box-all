@@ -1464,9 +1464,12 @@ delete_self() {
 
 # ==================== 主循环 ====================
 main_menu() {
+    echo "[DEBUG] 进入 main_menu 函数"
     while true; do
+        echo "[DEBUG] 显示主菜单"
         show_main_menu
         read -p "请选择 [0-6]: " m_choice
+        echo "[DEBUG] 用户选择: $m_choice"
         
         case $m_choice in
             1)
@@ -1532,9 +1535,9 @@ main() {
     setup_sb_shortcut
     load_links_from_files
     
+    echo "[DEBUG] 准备进入主菜单..."
     main_menu
+    echo "[DEBUG] 主菜单已退出"
 }
-
-main
 
 main
