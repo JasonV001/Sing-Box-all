@@ -311,6 +311,11 @@ load_inbounds_from_config() {
         local port=$(echo "$inbound" | jq -r '.listen_port' 2>/dev/null || echo "0")
         local type=$(echo "$inbound" | jq -r '.type' 2>/dev/null || echo "unknown")
         
+        # 跳过 shadowsocks-in-* (ShadowTLS 的内部组件)
+        if [[ "$tag" == "shadowsocks-in-"* ]]; then
+            continue
+        fi
+        
         # 判断协议类型
         local proto="unknown"
         local sni=""
@@ -321,11 +326,11 @@ load_inbounds_from_config() {
         elif [[ "$tag" == *"hy2-in-"* ]]; then
             proto="Hysteria2"
             sni=$(echo "$inbound" | jq -r '.tls.server_name // ""' 2>/dev/null)
-        elif [[ "$tag" == *"socks-in"* ]]; then
-            proto="SOCKS5"
         elif [[ "$tag" == *"shadowtls-in-"* ]]; then
             proto="ShadowTLS v3"
             sni=$(echo "$inbound" | jq -r '.handshake.server // ""' 2>/dev/null)
+        elif [[ "$tag" == *"socks-in"* ]]; then
+            proto="SOCKS5"
         elif [[ "$tag" == *"vless-tls-in-"* ]]; then
             proto="HTTPS"
             sni=$(echo "$inbound" | jq -r '.tls.server_name // ""' 2>/dev/null)
@@ -505,10 +510,10 @@ regenerate_links_from_config() {
                     local ss_method=$(echo "$ss_inbound" | jq -r '.method // "2022-blake3-aes-128-gcm"' 2>/dev/null)
                     
                     if [[ -n "$ss_password" ]]; then
-                        # URL 安全的 base64 编码
-                        local ss_userinfo=$(echo -n "${ss_method}:${ss_password}" | base64 -w0 | sed 's/+/-/g; s/\//_/g; s/=//g')
-                        local plugin_json="{\"version\":\"3\",\"password\":\"${shadowtls_password}\",\"host\":\"${sni}\",\"port\":\"${port}\",\"address\":\"${SERVER_IP}\"}"
-                        local plugin_base64=$(echo -n "$plugin_json" | base64 -w0 | sed 's/+/-/g; s/\//_/g; s/=//g')
+                        # 简化版 plugin_json（与原始版本一致）
+                        local ss_userinfo=$(echo -n "${ss_method}:${ss_password}" | base64 -w0)
+                        local plugin_json="{\"version\":\"3\",\"host\":\"${sni}\",\"password\":\"${shadowtls_password}\"}"
+                        local plugin_base64=$(echo -n "$plugin_json" | base64 -w0)
                         local link="ss://${ss_userinfo}@${SERVER_IP}:${port}?shadow-tls=${plugin_base64}#ShadowTLS-${SERVER_IP}"
                         
                         local line="[ShadowTLS v3] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n----------------------------------------\n\n"
@@ -907,14 +912,10 @@ setup_shadowtls() {
   \"password\": \"${SS_PASSWORD}\"
 }"
     
-    # URL 安全的 base64 编码函数
-    urlsafe_base64() {
-        echo -n "$1" | base64 -w0 | sed 's/+/-/g; s/\//_/g; s/=//g'
-    }
-    
-    local ss_userinfo=$(urlsafe_base64 "2022-blake3-aes-128-gcm:${SS_PASSWORD}")
-    local plugin_json="{\"version\":\"3\",\"password\":\"${SHADOWTLS_PASSWORD}\",\"host\":\"${SHADOWTLS_SNI}\",\"port\":\"${PORT}\",\"address\":\"${SERVER_IP}\"}"
-    local plugin_base64=$(urlsafe_base64 "$plugin_json")
+    # 简化版 plugin_json（与原始版本一致）
+    local ss_userinfo=$(echo -n "2022-blake3-aes-128-gcm:${SS_PASSWORD}" | base64 -w0)
+    local plugin_json="{\"version\":\"3\",\"host\":\"${SHADOWTLS_SNI}\",\"password\":\"${SHADOWTLS_PASSWORD}\"}"
+    local plugin_base64=$(echo -n "$plugin_json" | base64 -w0)
     
     LINK="ss://${ss_userinfo}@${SERVER_IP}:${PORT}?shadow-tls=${plugin_base64}#ShadowTLS-${SERVER_IP}"
     
