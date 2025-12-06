@@ -4,8 +4,6 @@
 # 支持协议: Reality, Hysteria2, SOCKS5, ShadowTLS, HTTPS, AnyTLS
 # 支持功能: 节点管理, 中转配置, 链接查看, 完整卸载
 
-set -e
-
 # ==================== 颜色定义 ====================
 RED='\033[0;31m'
 GREEN='\033[0;32m'
