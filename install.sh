@@ -1881,13 +1881,14 @@ delete_all_nodes() {
   "dns": {
     "servers": [
       {
-        "tag": "remote",
-        "address": "https://dns.google/dns-query"
-      },
-      {
         "tag": "local",
         "address": "local",
         "detour": "direct"
+      },
+      {
+        "tag": "remote",
+        "address": "https://dns.google/dns-query",
+        "address_resolver": "local"
       }
     ],
     "rules": [],
@@ -1994,13 +1995,14 @@ generate_config() {
         dns_json='{
     "servers": [
       {
-        "tag": "remote",
-        "address": "https://dns.google/dns-query"
-      },
-      {
         "tag": "local",
         "address": "local",
         "detour": "direct"
+      },
+      {
+        "tag": "remote",
+        "address": "https://dns.google/dns-query",
+        "address_resolver": "local"
       }
     ],
     "rules": [],
@@ -2011,13 +2013,14 @@ generate_config() {
         dns_json='{
     "servers": [
       {
-        "tag": "remote",
-        "address": "https://dns.google/dns-query"
-      },
-      {
         "tag": "local",
         "address": "local",
         "detour": "direct"
+      },
+      {
+        "tag": "remote",
+        "address": "https://dns.google/dns-query",
+        "address_resolver": "local"
       }
     ],
     "rules": [],
