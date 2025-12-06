@@ -63,6 +63,10 @@ wget -O /root/install.sh https://raw.githubusercontent.com/JasonV001/Sing-Box-al
 重启服务: systemctl restart sing-box
 停止服务: systemctl stop sing-box
 ```
+```
+chmod +x install.sh
+./install.sh
+```
 
 # 测试
 ```
