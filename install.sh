@@ -188,26 +188,10 @@ gen_cert_for_sni() {
     
     mkdir -p "${node_cert_dir}"
     
-    # 验证域名是否可访问（可选，不影响证书生成）
-    if curl --output /dev/null --silent --head --fail --max-time 3 "https://${sni}" 2>/dev/null; then
-        print_info "域名 ${sni} 可访问，生成自签证书..."
-    else
-        print_warning "域名 ${sni} 无法访问，仍将生成自签证书"
-    fi
+    openssl genrsa -out "${node_cert_dir}/private.key" 2048 2>/dev/null
+    openssl req -new -x509 -days 36500 -key "${node_cert_dir}/private.key" -out "${node_cert_dir}/cert.pem" -subj "/C=US/ST=California/L=Cupertino/O=Apple Inc./CN=${sni}" 2>/dev/null
     
-    # 使用 ECC (椭圆曲线) 生成证书，比 RSA 更高效
-    # prime256v1 是 NIST P-256 曲线，广泛支持且安全
-    openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) \
-        -keyout "${node_cert_dir}/private.key" \
-        -out "${node_cert_dir}/cert.pem" \
-        -subj "/CN=${sni}" \
-        -days 36500 2>/dev/null
-    
-    # 设置权限
-    chmod 600 "${node_cert_dir}/private.key"
-    chmod 644 "${node_cert_dir}/cert.pem"
-    
-    print_success "证书生成完成 (${sni}, ECC 算法, 有效期100年)"
+    print_success "证书生成完成 (${sni}, 有效期100年)"
 }
 
 # ==================== 密钥管理 ====================
@@ -1944,8 +1928,14 @@ generate_config() {
         outbounds_array+=("$relay_json")
     done
     
-    # 添加 direct outbound
-    outbounds_array+=('{"type": "direct", "tag": "direct"}')
+    # 添加 direct outbound（根据出站 IP 模式设置）
+    local direct_outbound
+    if [[ "$OUTBOUND_IP_MODE" == "ipv6" ]]; then
+        direct_outbound='{"type": "direct", "tag": "direct"}'
+    else
+        direct_outbound='{"type": "direct", "tag": "direct"}'
+    fi
+    outbounds_array+=("$direct_outbound")
     
     # 组合 outbounds
     local outbounds="["
@@ -1999,13 +1989,9 @@ EOFCONFIG
 start_svc() {
     print_info "验证配置文件..."
     
-    # 调试：显示配置文件内容
-    echo -e "${YELLOW}[DEBUG] 配置文件内容:${NC}"
-    cat ${CONFIG_FILE}
-    echo ""
-    
     if ! ${INSTALL_DIR}/sing-box check -c ${CONFIG_FILE} 2>&1; then
         print_error "配置验证失败"
+        cat ${CONFIG_FILE}
         exit 1
     fi
     
@@ -2171,9 +2157,9 @@ show_main_menu() {
             proto_list+="${proto}:${relay_proto_count[$proto]}"
         done
         
-        outbound_desc="混合 (直连:${direct_count} 中转:${relay_count} [${proto_list}])"
+        outbound_desc="中转 (直连:${direct_count} 中转:${relay_count} [${proto_list}])"
     else
-        outbound_desc="全部直连"
+        outbound_desc="直连"
     fi
     
     echo -e "  ${YELLOW}当前出站: ${GREEN}${outbound_desc}${NC}"
