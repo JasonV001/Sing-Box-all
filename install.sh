@@ -1944,14 +1944,8 @@ generate_config() {
         outbounds_array+=("$relay_json")
     done
     
-    # 添加 direct outbound（根据出站 IP 模式设置）
-    local direct_outbound
-    if [[ "$OUTBOUND_IP_MODE" == "ipv6" ]]; then
-        direct_outbound='{"type": "direct", "tag": "direct", "domain_strategy": "prefer_ipv6"}'
-    else
-        direct_outbound='{"type": "direct", "tag": "direct", "domain_strategy": "prefer_ipv4"}'
-    fi
-    outbounds_array+=("$direct_outbound")
+    # 添加 direct outbound
+    outbounds_array+=('{"type": "direct", "tag": "direct"}')
     
     # 组合 outbounds
     local outbounds="["
@@ -1987,12 +1981,55 @@ generate_config() {
         route_json='{"final":"direct"}'
     fi
     
+    # 构建 DNS 配置（根据出站 IP 模式）
+    local dns_config
+    if [[ "$OUTBOUND_IP_MODE" == "ipv6" ]]; then
+        dns_config='{
+    "servers": [
+      {
+        "tag": "dns-remote",
+        "address": "https://1.1.1.1/dns-query",
+        "address_resolver": "dns-direct",
+        "strategy": "prefer_ipv6"
+      },
+      {
+        "tag": "dns-direct",
+        "address": "local",
+        "strategy": "prefer_ipv6",
+        "detour": "direct"
+      }
+    ],
+    "rules": [],
+    "strategy": "prefer_ipv6"
+  }'
+    else
+        dns_config='{
+    "servers": [
+      {
+        "tag": "dns-remote",
+        "address": "https://1.1.1.1/dns-query",
+        "address_resolver": "dns-direct",
+        "strategy": "prefer_ipv4"
+      },
+      {
+        "tag": "dns-direct",
+        "address": "local",
+        "strategy": "prefer_ipv4",
+        "detour": "direct"
+      }
+    ],
+    "rules": [],
+    "strategy": "prefer_ipv4"
+  }'
+    fi
+    
     cat > ${CONFIG_FILE} << EOFCONFIG
 {
   "log": {
     "level": "info",
     "timestamp": true
   },
+  "dns": ${dns_config},
   "inbounds": [${INBOUNDS_JSON}],
   "outbounds": ${outbounds},
   "route": ${route_json}
