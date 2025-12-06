@@ -3,6 +3,49 @@
 ```
 wget -O /root/install.sh https://raw.githubusercontent.com/JasonV001/Sing-Box-all/main/install.sh && chmod +x /root/install.sh && bash /root/install.sh
 ```
+```
+╔═══════════════════════════════════════════════════════╗
+║                   支持的中转协议格式                    ║
+╚═══════════════════════════════════════════════════════╝
+
+1. SOCKS5 代理
+   格式: socks5://[用户名:密码@]服务器:端口
+   示例:
+     socks5://user:pass@1.2.3.4:1080
+     socks5://1.2.3.4:1080 (无认证)
+
+2. HTTP/HTTPS 代理
+   格式: http(s)://[用户名:密码@]服务器:端口
+   示例:
+     http://user:pass@1.2.3.4:8080
+     https://1.2.3.4:443 (无认证)
+
+3. Shadowsocks
+   格式: ss://base64(加密方式:密码)@服务器:端口
+   示例:
+     ss://YWVzLTI1Ni1nY206cGFzc3dvcmQ=@1.2.3.4:8388
+
+4. VMess
+   格式: vmess://base64(JSON配置)
+   说明: 标准 V2Ray 分享链接
+
+5. VLESS
+   格式: vless://UUID@服务器:端口?参数#备注
+   示例:
+     vless://uuid@1.2.3.4:443?security=tls&sni=example.com
+   支持参数: security, sni, flow, type 等
+
+6. Trojan
+   格式: trojan://密码@服务器:端口?参数#备注
+   示例:
+     trojan://password@1.2.3.4:443?sni=example.com
+   支持参数: sni, type, security 等
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+提示: 直接粘贴完整的节点分享链接即可，脚本会自动识别协议类型
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
 ## ✨ 支持协议
 
 | 协议 | 特点 | 推荐度 |
