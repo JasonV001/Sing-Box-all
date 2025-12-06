@@ -533,15 +533,21 @@ regenerate_links_from_config() {
   ],
   "outbounds": [
     {
+      "type": "selector",
+      "tag": "proxy",
+      "outbounds": ["ShadowTLS-${port}"],
+      "default": "ShadowTLS-${port}"
+    },
+    {
       "type": "shadowsocks",
-      "tag": "ss-out",
+      "tag": "ShadowTLS-${port}",
       "method": "${ss_method}",
       "password": "${ss_password}",
-      "detour": "shadowtls-out"
+      "detour": "shadowtls-out-${port}"
     },
     {
       "type": "shadowtls",
-      "tag": "shadowtls-out",
+      "tag": "shadowtls-out-${port}",
       "server": "${SERVER_IP}",
       "server_port": ${port},
       "version": 3,
@@ -560,7 +566,7 @@ regenerate_links_from_config() {
       {"geosite": "cn", "outbound": "direct"},
       {"geoip": "cn", "outbound": "direct"}
     ],
-    "final": "ss-out"
+    "final": "proxy"
   }
 }
 EOFCLIENT
@@ -1006,15 +1012,21 @@ setup_shadowtls() {
   ],
   "outbounds": [
     {
+      "type": "selector",
+      "tag": "proxy",
+      "outbounds": ["ShadowTLS-${PORT}"],
+      "default": "ShadowTLS-${PORT}"
+    },
+    {
       "type": "shadowsocks",
-      "tag": "ss-out",
+      "tag": "ShadowTLS-${PORT}",
       "method": "2022-blake3-aes-128-gcm",
       "password": "${SS_PASSWORD}",
-      "detour": "shadowtls-out"
+      "detour": "shadowtls-out-${PORT}"
     },
     {
       "type": "shadowtls",
-      "tag": "shadowtls-out",
+      "tag": "shadowtls-out-${PORT}",
       "server": "${SERVER_IP}",
       "server_port": ${PORT},
       "version": 3,
@@ -1048,7 +1060,7 @@ setup_shadowtls() {
         "outbound": "direct"
       }
     ],
-    "final": "ss-out"
+    "final": "proxy"
   }
 }
 EOFCLIENT
