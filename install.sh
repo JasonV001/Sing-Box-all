@@ -501,7 +501,7 @@ setup_shadowtls() {
     \"server_port\": 443
   },
   \"strict_mode\": true,
-  \"detour\": \"shadowsocks-in-${PORT}\"
+  \"detour\": \"shadowsocks-in\"
 },
 {
   \"type\": \"shadowsocks\",
@@ -527,7 +527,7 @@ setup_shadowtls() {
     local line="[ShadowTLS v3] ${SERVER_IP}:${PORT} (SNI: ${SHADOWTLS_SNI})\n${LINK}\n"
     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}\n"
     SHADOWTLS_LINKS="${SHADOWTLS_LINKS}${line}\n"
-    EXTRA_INFO="Shadowsocks方法: 2022-blake3-aes-128-gcm\nShadowsocks密码: ${SS_PASSWORD}\nShadowTLS密码: ${SHADOWTLS_PASSWORD}\n伪装域名: ${SHADOWTLS_SNI}"
+    EXTRA_INFO="Shadowsocks方法: 2022-blake3-aes-128-gcm\nShadowsocks密码: ${SS_PASSWORD}\nShadowTLS密码: ${SHADOWTLS_PASSWORD}\n伪装域名: ${SHADOWTLS_SNI}\n\n说明: 可直接复制链接导入 Shadowrocket"
     
     INBOUND_TAGS+=("shadowtls-in-${PORT}")
     INBOUND_PORTS+=("${PORT}")
