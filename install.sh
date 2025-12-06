@@ -2027,10 +2027,28 @@ EOFCONFIG
 start_svc() {
     print_info "验证配置文件..."
     
-    if ! ${INSTALL_DIR}/sing-box check -c ${CONFIG_FILE} 2>&1; then
-        print_error "配置验证失败"
+    # 捕获验证输出
+    local check_output
+    check_output=$(${INSTALL_DIR}/sing-box check -c ${CONFIG_FILE} 2>&1)
+    local check_exit_code=$?
+    
+    if [[ $check_exit_code -ne 0 ]]; then
+        print_error "配置验证失败 (退出码: ${check_exit_code})"
+        echo -e "${YELLOW}错误详情:${NC}"
+        echo "$check_output"
+        echo ""
+        echo -e "${YELLOW}配置文件内容:${NC}"
         cat ${CONFIG_FILE}
         exit 1
+    fi
+    
+    # 检查是否有警告
+    if echo "$check_output" | grep -q "WARN"; then
+        print_warning "配置验证通过，但有警告："
+        echo "$check_output" | grep "WARN"
+        echo ""
+    else
+        print_success "配置验证通过"
     fi
     
     print_info "启动 sing-box 服务..."
