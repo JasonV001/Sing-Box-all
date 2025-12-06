@@ -337,10 +337,31 @@ load_inbounds_from_config() {
         INBOUND_PORTS+=("$port")
         INBOUND_PROTOS+=("$proto")
         INBOUND_SNIS+=("$sni")
-        INBOUND_RELAY_TAGS+=("direct")
+        INBOUND_RELAY_TAGS+=("direct")  # 默认直连，稍后从路由规则更新
     done
     
     INBOUNDS_JSON="$inbound_list"
+    
+    # 从路由规则中恢复中转配置
+    local route_rules=$(jq -c '.route.rules[]? // empty' "${CONFIG_FILE}" 2>/dev/null)
+    if [[ -n "$route_rules" ]]; then
+        while IFS= read -r rule; do
+            local inbound_array=$(echo "$rule" | jq -r '.inbound[]? // empty' 2>/dev/null)
+            local outbound=$(echo "$rule" | jq -r '.outbound // ""' 2>/dev/null)
+            
+            if [[ -n "$outbound" && "$outbound" != "direct" ]]; then
+                # 为匹配的 inbound 设置中转标签
+                while IFS= read -r inbound_tag; do
+                    for i in "${!INBOUND_TAGS[@]}"; do
+                        if [[ "${INBOUND_TAGS[$i]}" == "$inbound_tag" ]]; then
+                            INBOUND_RELAY_TAGS[$i]="$outbound"
+                            break
+                        fi
+                    done
+                done <<< "$inbound_array"
+            fi
+        done <<< "$route_rules"
+    fi
     
     return 0
 }
@@ -2301,10 +2322,11 @@ delete_self() {
 # ==================== 主循环 ====================
 main_menu() {
     while true; do
-        # 每次显示菜单前，从配置文件重新加载节点信息
+        # 每次显示菜单前，从配置文件重新加载节点信息和中转配置
         if [[ -f "${CONFIG_FILE}" ]]; then
             load_inbounds_from_config
         fi
+        load_relays_from_file
         
         show_main_menu
         read -p "请选择 [0-6]: " m_choice
