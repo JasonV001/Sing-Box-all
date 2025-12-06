@@ -1879,16 +1879,13 @@ delete_all_nodes() {
     "servers": [
       {
         "tag": "local",
-        "address": "local",
-        "detour": "direct"
+        "address": "local"
       },
       {
         "tag": "remote",
-        "address": "https://dns.google/dns-query",
-        "address_resolver": "local"
+        "address": "8.8.8.8"
       }
     ],
-    "rules": [],
     "final": "remote",
     "strategy": "${dns_strategy}"
   },
@@ -1993,16 +1990,13 @@ generate_config() {
     "servers": [
       {
         "tag": "local",
-        "address": "local",
-        "detour": "direct"
+        "address": "local"
       },
       {
         "tag": "remote",
-        "address": "https://dns.google/dns-query",
-        "address_resolver": "local"
+        "address": "8.8.8.8"
       }
     ],
-    "rules": [],
     "final": "remote",
     "strategy": "prefer_ipv6"
   }'
@@ -2011,16 +2005,13 @@ generate_config() {
     "servers": [
       {
         "tag": "local",
-        "address": "local",
-        "detour": "direct"
+        "address": "local"
       },
       {
         "tag": "remote",
-        "address": "https://dns.google/dns-query",
-        "address_resolver": "local"
+        "address": "8.8.8.8"
       }
     ],
-    "rules": [],
     "final": "remote",
     "strategy": "prefer_ipv4"
   }'
