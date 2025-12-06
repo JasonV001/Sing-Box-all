@@ -516,7 +516,56 @@ regenerate_links_from_config() {
                         local plugin_base64=$(echo -n "$plugin_json" | base64 -w0 | sed 's/+/-/g; s/\//_/g; s/=//g')
                         local link="ss://${ss_userinfo}@${SERVER_IP}:${port}?shadow-tls=${plugin_base64}#ShadowTLS-${SERVER_IP}"
                         
-                        local line="[ShadowTLS v3] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n----------------------------------------\n\n"
+                        # 生成客户端配置文件
+                        local client_config_file="${LINK_DIR}/shadowtls_client_${port}.json"
+                        cat > "${client_config_file}" << EOFCLIENT
+{
+  "log": {"level": "info"},
+  "dns": {"servers": [{"tag": "google", "address": "8.8.8.8"}]},
+  "inbounds": [
+    {
+      "type": "mixed",
+      "tag": "mixed-in",
+      "listen": "127.0.0.1",
+      "listen_port": 1080,
+      "sniff": true
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "shadowsocks",
+      "tag": "ss-out",
+      "method": "${ss_method}",
+      "password": "${ss_password}",
+      "detour": "shadowtls-out"
+    },
+    {
+      "type": "shadowtls",
+      "tag": "shadowtls-out",
+      "server": "${SERVER_IP}",
+      "server_port": ${port},
+      "version": 3,
+      "password": "${shadowtls_password}",
+      "tls": {
+        "enabled": true,
+        "server_name": "${sni}",
+        "utls": {"enabled": true, "fingerprint": "chrome"}
+      }
+    },
+    {"type": "direct", "tag": "direct"},
+    {"type": "block", "tag": "block"}
+  ],
+  "route": {
+    "rules": [
+      {"geosite": "cn", "outbound": "direct"},
+      {"geoip": "cn", "outbound": "direct"}
+    ],
+    "final": "ss-out"
+  }
+}
+EOFCLIENT
+                        
+                        local line="[ShadowTLS v3] ${SERVER_IP}:${port} (SNI: ${sni})\n${link}\n客户端配置: ${client_config_file}\n----------------------------------------\n\n"
                         ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}"
                         SHADOWTLS_LINKS="${SHADOWTLS_LINKS}${line}"
                     fi
@@ -929,7 +978,82 @@ setup_shadowtls() {
     local line="[ShadowTLS v3] ${SERVER_IP}:${PORT} (SNI: ${SHADOWTLS_SNI})\n${LINK}\n----------------------------------------\n\n"
     ALL_LINKS_TEXT="${ALL_LINKS_TEXT}${line}"
     SHADOWTLS_LINKS="${SHADOWTLS_LINKS}${line}"
-    EXTRA_INFO="Shadowsocks方法: 2022-blake3-aes-128-gcm\nShadowsocks密码: ${SS_PASSWORD}\nShadowTLS密码: ${SHADOWTLS_PASSWORD}\n伪装域名: ${SHADOWTLS_SNI}\n\n说明: 可直接复制链接导入 Shadowrocket、NekoBox、v2rayN 等客户端"
+    
+    # 生成客户端配置文件（NekoBox/Sing-box 专用）
+    local client_config_file="${LINK_DIR}/shadowtls_client_${PORT}.json"
+    cat > "${client_config_file}" << EOFCLIENT
+{
+  "log": {
+    "level": "info"
+  },
+  "dns": {
+    "servers": [
+      {
+        "tag": "google",
+        "address": "8.8.8.8"
+      }
+    ]
+  },
+  "inbounds": [
+    {
+      "type": "mixed",
+      "tag": "mixed-in",
+      "listen": "127.0.0.1",
+      "listen_port": 1080,
+      "sniff": true,
+      "set_system_proxy": false
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "shadowsocks",
+      "tag": "ss-out",
+      "method": "2022-blake3-aes-128-gcm",
+      "password": "${SS_PASSWORD}",
+      "detour": "shadowtls-out"
+    },
+    {
+      "type": "shadowtls",
+      "tag": "shadowtls-out",
+      "server": "${SERVER_IP}",
+      "server_port": ${PORT},
+      "version": 3,
+      "password": "${SHADOWTLS_PASSWORD}",
+      "tls": {
+        "enabled": true,
+        "server_name": "${SHADOWTLS_SNI}",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        }
+      }
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "geosite": "cn",
+        "outbound": "direct"
+      },
+      {
+        "geoip": "cn",
+        "outbound": "direct"
+      }
+    ],
+    "final": "ss-out"
+  }
+}
+EOFCLIENT
+    
+    EXTRA_INFO="Shadowsocks方法: 2022-blake3-aes-128-gcm\nShadowsocks密码: ${SS_PASSWORD}\nShadowTLS密码: ${SHADOWTLS_PASSWORD}\n伪装域名: ${SHADOWTLS_SNI}\n\n${YELLOW}重要提示:${NC}\n- 链接格式仅支持 Shadowrocket 等客户端\n- NekoBox/Sing-box 客户端请使用配置文件: ${client_config_file}\n- 配置文件导入方法: 配置 -> 从文件导入配置"
     
     INBOUND_TAGS+=("shadowtls-in-${PORT}")
     INBOUND_PORTS+=("${PORT}")
@@ -938,6 +1062,7 @@ setup_shadowtls() {
     INBOUND_RELAY_TAGS+=("direct")
     
     print_success "ShadowTLS v3 配置完成 (SNI: ${SHADOWTLS_SNI})"
+    print_info "客户端配置文件已保存: ${client_config_file}"
     save_links_to_files
 }
 
