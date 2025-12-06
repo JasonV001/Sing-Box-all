@@ -1972,39 +1972,39 @@ generate_config() {
         dns_json='{
     "servers": [
       {
-        "tag": "dns-remote",
-        "address": "https://dns.google/dns-query",
-        "address_resolver": "dns-direct",
-        "strategy": "prefer_ipv6"
-      },
-      {
         "tag": "dns-direct",
         "address": "local",
-        "strategy": "prefer_ipv6",
+        "detour": "direct"
+      },
+      {
+        "tag": "dns-remote",
+        "address": "tls://8.8.8.8",
+        "address_resolver": "dns-direct",
         "detour": "direct"
       }
     ],
     "rules": [],
-    "strategy": "prefer_ipv6"
+    "strategy": "prefer_ipv6",
+    "independent_cache": true
   }'
     else
         dns_json='{
     "servers": [
       {
-        "tag": "dns-remote",
-        "address": "https://dns.google/dns-query",
-        "address_resolver": "dns-direct",
-        "strategy": "prefer_ipv4"
-      },
-      {
         "tag": "dns-direct",
         "address": "local",
-        "strategy": "prefer_ipv4",
+        "detour": "direct"
+      },
+      {
+        "tag": "dns-remote",
+        "address": "tls://8.8.8.8",
+        "address_resolver": "dns-direct",
         "detour": "direct"
       }
     ],
     "rules": [],
-    "strategy": "prefer_ipv4"
+    "strategy": "prefer_ipv4",
+    "independent_cache": true
   }'
     fi
     
