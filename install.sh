@@ -871,6 +871,11 @@ setup_relay() {
                     continue
                 fi
                 
+                if [[ -z "$RELAY_JSON" ]]; then
+                    print_warning "尚未设置中转上游，请先选择选项 [1] 设置中转链接"
+                    continue
+                fi
+                
                 while true; do
                     echo ""
                     echo -e "${CYAN}当前节点列表:${NC}"
