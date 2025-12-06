@@ -44,6 +44,12 @@ SHADOWTLS_LINKS=""
 HTTPS_LINKS=""
 ANYTLS_LINKS=""
 
+# IP 配置
+SERVER_IPV6=""
+INBOUND_IP_MODE="ipv4"   # ipv4 或 ipv6，控制入站监听地址
+OUTBOUND_IP_MODE="ipv4"  # ipv4 或 ipv6，控制出站连接
+IP_CONFIG_FILE="/etc/sing-box/ip_config.conf"
+
 # 中转配置数组
 RELAY_TAGS=()        # 中转标签数组
 RELAY_JSONS=()       # 中转JSON配置数组
@@ -533,6 +539,24 @@ regenerate_links_from_config() {
     save_links_to_files
 }
 
+# ==================== IP 配置管理 ====================
+save_ip_config() {
+    mkdir -p "$(dirname "${IP_CONFIG_FILE}")"
+    cat > "${IP_CONFIG_FILE}" << EOF
+# Sing-box IP 配置
+SERVER_IP="${SERVER_IP}"
+SERVER_IPV6="${SERVER_IPV6}"
+INBOUND_IP_MODE="${INBOUND_IP_MODE}"
+OUTBOUND_IP_MODE="${OUTBOUND_IP_MODE}"
+EOF
+}
+
+load_ip_config() {
+    if [[ -f "${IP_CONFIG_FILE}" ]]; then
+        source "${IP_CONFIG_FILE}"
+    fi
+}
+
 # ==================== 中转配置管理 ====================
 save_relays_to_file() {
     mkdir -p "$(dirname "${RELAY_FILE}")"
@@ -610,15 +634,49 @@ regenerate_all_links() {
 
 # ==================== 网络工具 ====================
 get_ip() {
-    print_info "获取服务器 IP..."
-    SERVER_IP=$(curl -s4m5 ifconfig.me || curl -s4m5 api.ipify.org || curl -s4m5 ip.sb)
+    print_info "获取服务器 IP 地址..."
     
-    if [[ -z "$SERVER_IP" ]]; then
-        print_error "无法获取IP"
+    # 获取 IPv4
+    local ipv4=$(curl -s4m5 ifconfig.me 2>/dev/null || curl -s4m5 api.ipify.org 2>/dev/null || curl -s4m5 ip.sb 2>/dev/null)
+    
+    # 获取 IPv6
+    local ipv6=$(curl -s6m5 ifconfig.me 2>/dev/null || curl -s6m5 api6.ipify.org 2>/dev/null || curl -s6m5 ip.sb 2>/dev/null)
+    
+    # 显示检测到的 IP
+    echo ""
+    if [[ -n "$ipv4" ]]; then
+        echo -e "  ${GREEN}检测到 IPv4:${NC} ${ipv4}"
+    fi
+    if [[ -n "$ipv6" ]]; then
+        echo -e "  ${GREEN}检测到 IPv6:${NC} ${ipv6}"
+    fi
+    echo ""
+    
+    # 如果两个都没有，报错退出
+    if [[ -z "$ipv4" && -z "$ipv6" ]]; then
+        print_error "无法获取服务器 IP 地址"
         exit 1
     fi
     
-    print_success "服务器 IP: ${SERVER_IP}"
+    # 如果只有一个，直接使用
+    if [[ -n "$ipv4" && -z "$ipv6" ]]; then
+        SERVER_IP="$ipv4"
+        print_success "使用 IPv4: ${SERVER_IP}"
+        return 0
+    elif [[ -z "$ipv4" && -n "$ipv6" ]]; then
+        SERVER_IP="$ipv6"
+        print_success "使用 IPv6: ${SERVER_IP}"
+        return 0
+    fi
+    
+    # 如果两个都有，默认使用 IPv4
+    SERVER_IP="$ipv4"
+    SERVER_IPV6="$ipv6"
+    print_success "检测到双栈网络，默认使用 IPv4: ${SERVER_IP}"
+    echo -e "${CYAN}提示: 可在主菜单 [出入站配置] 中切换 IPv6 或修改 IP${NC}"
+    
+    # 保存 IP 配置
+    save_ip_config
 }
 
 check_port_in_use() {
@@ -1540,6 +1598,115 @@ setup_relay() {
     done
 }
 
+# ==================== 出入站 IP 配置菜单 ====================
+ip_config_menu() {
+    while true; do
+        clear
+        echo -e "${CYAN}╔═══════════════════════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║              ${GREEN}出入站 IP 配置${CYAN}                ║${NC}"
+        echo -e "${CYAN}╚═══════════════════════════════════════════════════════╝${NC}"
+        echo ""
+        echo -e "${YELLOW}当前配置:${NC}"
+        echo -e "  IPv4 地址: ${GREEN}${SERVER_IP}${NC}"
+        [[ -n "$SERVER_IPV6" ]] && echo -e "  IPv6 地址: ${GREEN}${SERVER_IPV6}${NC}"
+        echo -e "  入站模式: ${GREEN}${INBOUND_IP_MODE}${NC}"
+        echo -e "  出站模式: ${GREEN}${OUTBOUND_IP_MODE}${NC}"
+        echo ""
+        echo -e "${CYAN}说明:${NC}"
+        echo -e "  ${YELLOW}入站${NC}: 控制节点监听的 IP 版本（客户端连接到哪个 IP）"
+        echo -e "  ${YELLOW}出站${NC}: 控制服务器对外连接的 IP 版本（访问网站用哪个 IP）"
+        echo ""
+        echo -e "  ${GREEN}[1]${NC} 设置入站为 IPv4"
+        echo -e "  ${GREEN}[2]${NC} 设置入站为 IPv6"
+        echo -e "  ${GREEN}[3]${NC} 设置出站为 IPv4"
+        echo -e "  ${GREEN}[4]${NC} 设置出站为 IPv6"
+        echo -e "  ${GREEN}[5]${NC} 手动修改 IPv4 地址"
+        echo -e "  ${GREEN}[6]${NC} 手动修改 IPv6 地址"
+        echo -e "  ${GREEN}[0]${NC} 返回主菜单"
+        echo ""
+        read -p "请选择 [0-6]: " ip_choice
+        
+        case $ip_choice in
+            1)
+                INBOUND_IP_MODE="ipv4"
+                save_ip_config
+                print_success "入站已设置为 IPv4"
+                echo -e "${YELLOW}提示: 需要重新生成配置才能生效${NC}"
+                read -p "是否立即重新生成配置? (y/N): " regen
+                if [[ "$regen" =~ ^[Yy]$ ]] && [[ -n "$INBOUNDS_JSON" ]]; then
+                    generate_config && start_svc
+                fi
+                ;;
+            2)
+                if [[ -z "$SERVER_IPV6" ]]; then
+                    print_error "未检测到 IPv6 地址，请先手动设置"
+                    read -p "按回车继续..." _
+                    continue
+                fi
+                INBOUND_IP_MODE="ipv6"
+                save_ip_config
+                print_success "入站已设置为 IPv6"
+                echo -e "${YELLOW}提示: 需要重新生成配置才能生效${NC}"
+                read -p "是否立即重新生成配置? (y/N): " regen
+                if [[ "$regen" =~ ^[Yy]$ ]] && [[ -n "$INBOUNDS_JSON" ]]; then
+                    generate_config && start_svc
+                fi
+                ;;
+            3)
+                OUTBOUND_IP_MODE="ipv4"
+                save_ip_config
+                print_success "出站已设置为 IPv4"
+                echo -e "${YELLOW}提示: 需要重新生成配置才能生效${NC}"
+                read -p "是否立即重新生成配置? (y/N): " regen
+                if [[ "$regen" =~ ^[Yy]$ ]] && [[ -n "$INBOUNDS_JSON" ]]; then
+                    generate_config && start_svc
+                fi
+                ;;
+            4)
+                if [[ -z "$SERVER_IPV6" ]]; then
+                    print_error "未检测到 IPv6 地址，请先手动设置"
+                    read -p "按回车继续..." _
+                    continue
+                fi
+                OUTBOUND_IP_MODE="ipv6"
+                save_ip_config
+                print_success "出站已设置为 IPv6"
+                echo -e "${YELLOW}提示: 需要重新生成配置才能生效${NC}"
+                read -p "是否立即重新生成配置? (y/N): " regen
+                if [[ "$regen" =~ ^[Yy]$ ]] && [[ -n "$INBOUNDS_JSON" ]]; then
+                    generate_config && start_svc
+                fi
+                ;;
+            5)
+                read -p "请输入 IPv4 地址: " new_ipv4
+                if [[ -n "$new_ipv4" ]]; then
+                    SERVER_IP="$new_ipv4"
+                    save_ip_config
+                    print_success "IPv4 地址已更新: ${SERVER_IP}"
+                    echo -e "${YELLOW}提示: 需要重新生成链接文件${NC}"
+                fi
+                ;;
+            6)
+                read -p "请输入 IPv6 地址: " new_ipv6
+                if [[ -n "$new_ipv6" ]]; then
+                    SERVER_IPV6="$new_ipv6"
+                    save_ip_config
+                    print_success "IPv6 地址已更新: ${SERVER_IPV6}"
+                    echo -e "${YELLOW}提示: 需要重新生成链接文件${NC}"
+                fi
+                ;;
+            0)
+                break
+                ;;
+            *)
+                print_error "无效选项"
+                ;;
+        esac
+        
+        [[ "$ip_choice" != "0" ]] && read -p "按回车继续..." _
+    done
+}
+
 clear_relay() {
     echo ""
     read -p "确认删除全部中转配置并恢复直连? (y/N): " confirm
@@ -1759,8 +1926,14 @@ generate_config() {
         outbounds_array+=("$relay_json")
     done
     
-    # 添加 direct outbound
-    outbounds_array+=('{"type": "direct", "tag": "direct"}')
+    # 添加 direct outbound（根据出站 IP 模式设置）
+    local direct_outbound
+    if [[ "$OUTBOUND_IP_MODE" == "ipv6" ]]; then
+        direct_outbound='{"type": "direct", "tag": "direct", "domain_strategy": "prefer_ipv6"}'
+    else
+        direct_outbound='{"type": "direct", "tag": "direct", "domain_strategy": "prefer_ipv4"}'
+    fi
+    outbounds_array+=("$direct_outbound")
     
     # 组合 outbounds
     local outbounds="["
@@ -2052,11 +2225,13 @@ show_main_menu() {
     echo ""
     echo -e "  ${GREEN}[2]${NC} 中转配置 (添加/配置/删除)"
     echo ""
-    echo -e "  ${GREEN}[3]${NC} 配置 / 查看节点"
+    echo -e "  ${GREEN}[3]${NC} 出入站配置 (IPv4/IPv6)"
     echo ""
-    echo -e "  ${GREEN}[4]${NC} 重新生成链接文件"
+    echo -e "  ${GREEN}[4]${NC} 配置 / 查看节点"
     echo ""
-    echo -e "  ${GREEN}[5]${NC} 一键删除脚本并退出"
+    echo -e "  ${GREEN}[5]${NC} 重新生成链接文件"
+    echo ""
+    echo -e "  ${GREEN}[6]${NC} 一键删除脚本并退出"
     echo ""
     echo -e "  ${GREEN}[0]${NC} 退出脚本"
     echo ""
@@ -2327,7 +2502,7 @@ main_menu() {
         load_relays_from_file
         
         show_main_menu
-        read -p "请选择 [0-5]: " m_choice
+        read -p "请选择 [0-6]: " m_choice
         
         case $m_choice in
             1)
@@ -2337,12 +2512,15 @@ main_menu() {
                 setup_relay
                 ;;
             3)
-                config_and_view_menu
+                ip_config_menu
                 ;;
             4)
-                regenerate_all_links
+                config_and_view_menu
                 ;;
             5)
+                regenerate_all_links
+                ;;
+            6)
                 delete_self
                 ;;
             0)
@@ -2388,6 +2566,9 @@ main() {
     gen_keys
     get_ip
     setup_sb_shortcut
+    
+    # 加载 IP 配置
+    load_ip_config
     
     # 从配置文件加载节点信息
     if [[ -f "${CONFIG_FILE}" ]]; then
