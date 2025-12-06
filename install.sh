@@ -1520,22 +1520,37 @@ EOSB
 
 # ==================== 主函数 ====================
 main() {
+    echo "[DEBUG] main 函数开始执行"
+    
     if [[ $EUID -ne 0 ]]; then
         print_error "需要 root 权限"
         exit 1
     fi
     
+    echo "[DEBUG] 1. 检测系统"
     detect_system
+    
+    echo "[DEBUG] 2. 安装 singbox"
     install_singbox
+    
+    echo "[DEBUG] 3. 创建目录"
     mkdir -p /etc/sing-box
+    
+    echo "[DEBUG] 4. 生成密钥"
     gen_keys
+    
+    echo "[DEBUG] 5. 获取IP"
     get_ip
+    
+    echo "[DEBUG] 6. 创建快捷命令"
     setup_sb_shortcut
+    
+    echo "[DEBUG] 7. 加载链接文件"
     load_links_from_files
     
-    echo "[DEBUG] 准备进入主菜单..."
+    echo "[DEBUG] 8. 准备进入主菜单..."
     main_menu
-    echo "[DEBUG] 主菜单已退出"
+    echo "[DEBUG] 9. 主菜单已退出"
 }
 
 main
