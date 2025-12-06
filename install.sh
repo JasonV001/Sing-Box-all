@@ -2050,15 +2050,13 @@ show_main_menu() {
     echo ""
     echo -e "  ${GREEN}[1]${NC} 添加/继续添加节点"
     echo ""
-    echo -e "  ${GREEN}[2]${NC} 设置中转 (SOCKS5 / HTTP(S))"
+    echo -e "  ${GREEN}[2]${NC} 中转配置 (添加/配置/删除)"
     echo ""
-    echo -e "  ${GREEN}[3]${NC} 删除中转，恢复直连"
+    echo -e "  ${GREEN}[3]${NC} 配置 / 查看节点"
     echo ""
-    echo -e "  ${GREEN}[4]${NC} 配置 / 查看节点"
+    echo -e "  ${GREEN}[4]${NC} 重新生成链接文件"
     echo ""
-    echo -e "  ${GREEN}[5]${NC} 重新生成链接文件"
-    echo ""
-    echo -e "  ${GREEN}[6]${NC} 一键删除脚本并退出"
+    echo -e "  ${GREEN}[5]${NC} 一键删除脚本并退出"
     echo ""
     echo -e "  ${GREEN}[0]${NC} 退出脚本"
     echo ""
@@ -2329,7 +2327,7 @@ main_menu() {
         load_relays_from_file
         
         show_main_menu
-        read -p "请选择 [0-6]: " m_choice
+        read -p "请选择 [0-5]: " m_choice
         
         case $m_choice in
             1)
@@ -2339,15 +2337,12 @@ main_menu() {
                 setup_relay
                 ;;
             3)
-                clear_relay
-                ;;
-            4)
                 config_and_view_menu
                 ;;
-            5)
+            4)
                 regenerate_all_links
                 ;;
-            6)
+            5)
                 delete_self
                 ;;
             0)
