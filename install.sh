@@ -46,7 +46,7 @@ ANYTLS_LINKS=""
 # IP 配置
 SERVER_IPV6=""
 INBOUND_IP_MODE="ipv4"   # ipv4 或 ipv6，控制入站监听地址
-OUTBOUND_IP_MODE="ipv4"  # ipv4 或 ipv6，控制出站连接
+OUTBOUND_IP_MODE="dual"  # ipv4, ipv6 或 dual，控制出站连接（默认双栈）
 IP_CONFIG_FILE="/etc/sing-box/ip_config.conf"
 
 # 中转配置数组
@@ -669,9 +669,9 @@ get_ip() {
         SERVER_IP="$ipv6"
         SERVER_IPV6=""
         INBOUND_IP_MODE="ipv6"
-        OUTBOUND_IP_MODE="ipv6"
+        OUTBOUND_IP_MODE="dual"
         print_success "使用 IPv6: ${SERVER_IP}"
-        print_info "已自动设置出入站为 IPv6 模式"
+        print_info "已自动设置入站为 IPv6，出站为双栈模式"
     fi
     
     # 保存 IP 配置
