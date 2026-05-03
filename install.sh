@@ -182,9 +182,9 @@ install_singbox() {
     print_info "检查依赖和 sing-box..."
     
     # ---- 根据系统安装依赖 ----
-    if [[ $ALPINE -eq 1 ]]; then
-        # Alpine: 基础工具
-        apk add --no-cache curl wget jq openssl util-linux coreutils >/dev/null 2>&1
+        if [[ $ALPINE -eq 1 ]]; then
+        # Alpine: 基础工具 + glibc 兼容层（运行 sing-box 需要）
+        apk add --no-cache curl wget jq openssl util-linux coreutils gcompat >/dev/null 2>&1
     else
         if ! command -v jq &>/dev/null || ! command -v openssl &>/dev/null; then
             apt-get update -qq && apt-get install -y curl wget jq openssl uuid-runtime >/dev/null 2>&1
