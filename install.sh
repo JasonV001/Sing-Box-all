@@ -457,6 +457,7 @@ setup_reality() {
 }
 
 # -------------------- Hysteria2 --------------------
+# -------------------- Hysteria2 --------------------
 setup_hysteria2() {
     echo ""; read_port_with_check 443
     read -p "伪装域名 [${DEFAULT_SNI}]: " HY2_SNI; HY2_SNI=${HY2_SNI:-${DEFAULT_SNI}}
@@ -468,7 +469,7 @@ setup_hysteria2() {
     inbounds_array+=("$inbound")
     INBOUND_TAGS+=("hy2-in-${PORT}"); INBOUND_PORTS+=("${PORT}"); INBOUND_PROTOS+=("Hysteria2"); INBOUND_SNIS+=("${HY2_SNI}"); INBOUND_RELAY_TAGS+=("direct")
     LINK="hysteria2://${use_pass}@${SERVER_IP}:${PORT}?insecure=1&sni=${HY2_SNI}#Hysteria2-${SERVER_IP}"
-    local line="[Hysteria2] ${SERVER_IP}:${PORT} (SNI...
+    local line="[Hysteria2] ${SERVER_IP}:${PORT} (SNI: ${HY2_SNI})\n${LINK}\n----------------------------------------\n\n"
     ALL_LINKS_TEXT+="$line"; HYSTERIA2_LINKS+="$line"
     print_success "Hysteria2 添加完成"
     save_links_to_files
