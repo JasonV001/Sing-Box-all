@@ -177,6 +177,61 @@ svc_is_active() {
         systemctl is-active --quiet sing-box
     fi
 }
+# ==================== 日志自动清理配置（首次安装时生效） ====================
+LOGROTATE_FLAG="/etc/sing-box/.logrotate_setup"
+
+setup_log_cleanup() {
+    # 幂等：如果已配置过，直接返回
+    [[ -f "${LOGROTATE_FLAG}" ]] && return 0
+
+    print_info "配置日志自动清理（7天 / 100M）..."
+
+    if [[ $ALPINE -eq 1 ]]; then
+        # ---------- Alpine / OpenRC ----------
+        if ! command -v logrotate &>/dev/null; then
+            apk add --no-cache logrotate >/dev/null 2>&1
+        fi
+
+        # 创建 logrotate 配置文件
+        cat > /etc/logrotate.d/sing-box << 'EOF'
+/var/log/sing-box.log {
+    daily
+    rotate 7
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    maxsize 100M
+}
+EOF
+
+        # 确保 crond 运行并自启，否则 logrotate 不会每天执行
+        rc-update add crond default 2>/dev/null
+        rc-service crond start 2>/dev/null
+
+        print_success "Alpine 日志清理已配置（logrotate + crond）"
+
+    else
+        # ---------- Debian / systemd ----------
+        # 使用 drop-in 配置 journald 仅限制 sing-box 的日志
+        mkdir -p /etc/systemd/journald.conf.d
+
+        cat > /etc/systemd/journald.conf.d/sing-box-log.conf << 'EOF'
+# 限制 sing-box 日志大小和保留时间
+[Journal]
+SystemMaxUse=100M
+MaxRetentionSec=7day
+EOF
+
+        systemctl restart systemd-journald
+        print_success "systemd journald 日志限制已生效"
+    fi
+
+    # 标记已配置，避免重复执行
+    mkdir -p "$(dirname "${LOGROTATE_FLAG}")"
+    touch "${LOGROTATE_FLAG}"
+}
 # ==================== 安装 sing-box ====================
 install_singbox() {
     print_info "检查依赖和 sing-box..."
@@ -260,8 +315,11 @@ EOFSVC
         systemctl daemon-reload
     fi
     
-    # 开机自启
+        # 开机自启
     svc_enable
+
+    # 首次安装时自动配置日志清理
+    setup_log_cleanup
     
     print_success "sing-box 安装完成 (版本: ${LATEST})"
 }
