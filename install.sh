@@ -699,6 +699,22 @@ regenerate_all_links() {
         return 1
     fi
 }
+# 放在 setup_anytls 函数之后，show_menu 之前
+show_new_node_info() {
+    if [[ -z "$NEW_NODE_LINK" ]]; then
+        return
+    fi
+    echo ""
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${GREEN}✅ 节点已启动，可直接复制链接：${NC}"
+    echo -e "${YELLOW}${NEW_NODE_LINK}${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    if [[ -n "$NEW_NODE_EXTRA_INFO" ]]; then
+        echo -e "$NEW_NODE_EXTRA_INFO"
+    fi
+    echo ""
+    read -p "按回车继续..." _
+}
 # ==================== 协议选择菜单 ====================
 show_menu() {
     # 检查 sing-box 是否已安装
@@ -706,6 +722,9 @@ show_menu() {
         print_error "sing-box 未安装，请先在主菜单选择 [7] 安装/更新 sing-box"
         return 1
     fi
+
+    # 确保密钥已生成（首次安装后需要）
+    gen_keys
 
     show_banner
     echo -e "${YELLOW}请选择要添加的协议节点:${NC}"
