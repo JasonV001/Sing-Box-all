@@ -235,79 +235,98 @@ EOF
 }
 # ==================== 安装 sing-box ====================
 install_singbox() {
-    print_info "检查依赖和 sing-box..."
+    print_info "检查 sing-box 安装状态（支持断点续装）..."
 
-    # ---- 内存检测 ----
-    local low_mem=0
-    local mem_avail_kb=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo 2>/dev/null)
-    if [[ -n "$mem_avail_kb" && "$mem_avail_kb" -lt 262144 ]]; then   # 256MB = 262144 KB
-        low_mem=1
-        print_warning "可用内存小于 256MB，将采用分步安装以避免 OOM"
-    fi
-
-    # ---- 安装系统依赖 ----
-    if [[ $ALPINE -eq 1 ]]; then
-        if [[ $low_mem -eq 1 ]]; then
-            print_info "Alpine：分步安装依赖（保护小内存）..."
+    # ---------- 1. 安装系统依赖（检查 jq 即可代表基础工具） ----------
+    if ! command -v jq &>/dev/null; then
+        print_info "缺少基础依赖，开始安装..."
+        if [[ $ALPINE -eq 1 ]]; then
+            # Alpine 低内存：逐个安装
             for pkg in curl wget jq openssl util-linux coreutils gcompat; do
                 apk add --no-cache "$pkg" >/dev/null 2>&1
-                sleep 1
+                sleep 0.5
             done
         else
-            apk add --no-cache curl wget jq openssl util-linux coreutils gcompat >/dev/null 2>&1
+            apt-get update -qq && apt-get install -y curl wget jq openssl uuid-runtime >/dev/null 2>&1
         fi
+        print_success "依赖安装完成"
     else
-        if ! command -v jq &>/dev/null || ! command -v openssl &>/dev/null; then
-            if [[ $low_mem -eq 1 ]]; then
-                print_info "Debian：分步安装依赖..."
-                apt-get update -qq
-                for pkg in curl wget jq openssl uuid-runtime; do
-                    apt-get install -y "$pkg" >/dev/null 2>&1
-                    sleep 1
-                done
-            else
-                apt-get update -qq && apt-get install -y curl wget jq openssl uuid-runtime >/dev/null 2>&1
+        print_success "基础依赖已就绪"
+    fi
+
+    # ---------- 2. 检查 sing-box 二进制是否可执行 ----------
+    local need_download=1
+    if [[ -x "${INSTALL_DIR}/sing-box" ]]; then
+        # 尝试运行版本检查，若返回正常则认为可用
+        if ${INSTALL_DIR}/sing-box version >/dev/null 2>&1; then
+            local version=$(${INSTALL_DIR}/sing-box version 2>&1 | grep -oP 'sing-box version \K[0-9.]+' || echo "unknown")
+            print_success "sing-box 已安装且可执行 (版本: ${version})"
+            need_download=0
+        else
+            print_warning "检测到损坏的 sing-box，将重新下载安装"
+            rm -f "${INSTALL_DIR}/sing-box"
+        fi
+    fi
+
+    # ---------- 3. 下载、解压、安装二进制（如需要） ----------
+    if [[ $need_download -eq 1 ]]; then
+        LATEST=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r '.tag_name' | sed 's/v//')
+        [[ -z "$LATEST" ]] && LATEST="1.12.0"
+        print_info "目标版本: ${LATEST}"
+
+        # 清理可能残留的半成品
+        rm -rf /tmp/sb.tar.gz /tmp/sing-box-${LATEST}-linux-${ARCH}
+
+        print_info "下载 sing-box (${LATEST} linux-${ARCH}) ..."
+        wget -q --show-progress -O /tmp/sb.tar.gz \
+            "https://github.com/SagerNet/sing-box/releases/download/v${LATEST}/sing-box-${LATEST}-linux-${ARCH}.tar.gz" 2>&1
+        if [[ ! -f /tmp/sb.tar.gz ]]; then
+            print_error "下载失败，请检查网络后重新运行脚本"
+            return 1
+        fi
+
+        # 小内存机器解压时很可能被杀，解压前确保文件完整
+        print_info "解压 sing-box ..."
+        if tar -xzf /tmp/sb.tar.gz -C /tmp 2>/dev/null; then
+            rm -f /tmp/sb.tar.gz
+        else
+            print_error "解压失败（可能内存不足被 kill），请增加 swap 后重新运行脚本"
+            rm -f /tmp/sb.tar.gz
+            return 1
+        fi
+
+        # 安装二进制
+        if [[ -f "/tmp/sing-box-${LATEST}-linux-${ARCH}/sing-box" ]]; then
+            install -Dm755 "/tmp/sing-box-${LATEST}-linux-${ARCH}/sing-box" "${INSTALL_DIR}/sing-box"
+            rm -rf "/tmp/sing-box-${LATEST}-linux-${ARCH}"
+            print_success "sing-box 二进制安装完成"
+        else
+            print_error "解压后未找到 sing-box 二进制，请检查"
+            return 1
+        fi
+    fi
+
+    # ---------- 4. 创建或修复服务文件 ----------
+    local need_service=0
+    if [[ $ALPINE -eq 1 ]]; then
+        if [[ ! -f /etc/init.d/sing-box ]]; then
+            need_service=1
+        else
+            # 如果服务文件不含预期的日志重定向命令，则重写
+            if ! grep -q "/var/log/sing-box.log" /etc/init.d/sing-box; then
+                need_service=1
             fi
         fi
-    fi
-
-    # ---- 检查 sing-box 是否已安装 ----
-    if command -v sing-box &>/dev/null; then
-        local version=$(sing-box version 2>&1 | grep -oP 'sing-box version \K[0-9.]+' || echo "unknown")
-        print_success "sing-box 已安装 (版本: ${version})"
-        return 0
-    fi
-
-    # ---- 获取最新版本 ----
-    print_info "检测最新版本..."
-    LATEST=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r '.tag_name' | sed 's/v//')
-    [[ -z "$LATEST" ]] && LATEST="1.12.0"
-    print_info "目标版本: ${LATEST}"
-
-    # ---- 下载、解压、安装（根据内存情况调整步骤） ----
-    if [[ $low_mem -eq 1 ]]; then
-        print_info "下载 sing-box (linux-${ARCH}) ..."
-        wget -q --show-progress -O /tmp/sb.tar.gz \
-            "https://github.com/SagerNet/sing-box/releases/download/v${LATEST}/sing-box-${LATEST}-linux-${ARCH}.tar.gz" 2>&1
-        sleep 2   # 等待磁盘/内存缓冲释放
-
-        print_info "解压 sing-box ..."
-        tar -xzf /tmp/sb.tar.gz -C /tmp
-        rm -f /tmp/sb.tar.gz
     else
-        wget -q --show-progress -O /tmp/sb.tar.gz \
-            "https://github.com/SagerNet/sing-box/releases/download/v${LATEST}/sing-box-${LATEST}-linux-${ARCH}.tar.gz" 2>&1
-        tar -xzf /tmp/sb.tar.gz -C /tmp
-        rm -f /tmp/sb.tar.gz
+        if [[ ! -f /etc/systemd/system/sing-box.service ]]; then
+            need_service=1
+        fi
     fi
 
-    # 安装二进制并清理
-    install -Dm755 /tmp/sing-box-${LATEST}-linux-${ARCH}/sing-box ${INSTALL_DIR}/sing-box
-    rm -rf /tmp/sing-box-${LATEST}-linux-${ARCH}
-
-    # ---- 创建服务文件（保留原逻辑，已内置 stdout/stderr 重定向） ----
-    if [[ $ALPINE -eq 1 ]]; then
-        cat > /etc/init.d/sing-box << 'EOF'
+    if [[ $need_service -eq 1 ]]; then
+        print_info "创建/更新服务文件..."
+        if [[ $ALPINE -eq 1 ]]; then
+            cat > /etc/init.d/sing-box << 'EOF'
 #!/sbin/openrc-run
 
 name="sing-box"
@@ -327,10 +346,10 @@ depend() {
     after firewall
 }
 EOF
-        chmod +x /etc/init.d/sing-box
-        rc-update add cgroups default >/dev/null 2>&1
-    else
-        cat > /etc/systemd/system/sing-box.service << 'EOFSVC'
+            chmod +x /etc/init.d/sing-box
+            print_success "OpenRC 服务已创建"
+        else
+            cat > /etc/systemd/system/sing-box.service << 'EOFSVC'
 [Unit]
 Description=sing-box service
 After=network.target
@@ -346,16 +365,20 @@ Environment=ENABLE_DEPRECATED_LEGACY_DNS_SERVERS=true
 [Install]
 WantedBy=multi-user.target
 EOFSVC
-        systemctl daemon-reload
+            systemctl daemon-reload
+            print_success "systemd 服务已创建"
+        fi
+    else
+        print_success "服务文件已就绪"
     fi
 
-    # 开机自启
+    # ---------- 5. 开机自启 ----------
     svc_enable
 
-    # 首次安装时自动配置日志清理
+    # ---------- 6. 配置日志清理（首次安装自动设置） ----------
     setup_log_cleanup
 
-    print_success "sing-box 安装完成 (版本: ${LATEST})"
+    print_success "sing-box 安装/修复完成"
 }
 # ==================== 证书生成 ====================
 gen_cert_for_sni() {
