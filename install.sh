@@ -1266,6 +1266,304 @@ setup_anytls() {
     save_links_to_files
 }
 # ==================== 中转配置菜单 ====================
+# ==================== 中转链接解析 ====================
+parse_socks_link() {
+    local link="$1"
+    
+    if [[ "$link" =~ ^socks://([A-Za-z0-9+/=]+) ]]; then
+        print_info "检测到 base64 编码的 SOCKS 链接，正在解码..."
+        local base64_part="${BASH_REMATCH[1]}"
+        local decoded=$(echo "$base64_part" | base64 -d 2>/dev/null)
+        
+        if [[ -z "$decoded" ]]; then
+            print_error "base64 解码失败"
+            return 1
+        fi
+        
+        link="socks5://${decoded}"
+    fi
+    
+    local data=$(echo "$link" | sed 's|socks5\?://||')
+    data=$(echo "$data" | cut -d'?' -f1 | cut -d'#' -f1)
+    
+    local relay_json=""
+    local relay_desc=""
+    
+    if [[ "$data" =~ @ ]]; then
+        local userpass=$(echo "$data" | cut -d'@' -f1)
+        local username=$(echo "$userpass" | cut -d':' -f1)
+        local password=$(echo "$userpass" | cut -d':' -f2-)
+        local server_port=$(echo "$data" | cut -d'@' -f2)
+        local server=$(echo "$server_port" | cut -d':' -f1)
+        local port=$(echo "$server_port" | cut -d':' -f2)
+        
+        if ! [[ "$port" =~ ^[0-9]+$ ]]; then
+            print_error "端口无效: ${port}"
+            return 1
+        fi
+        
+        local tag="relay-socks5-${#RELAY_TAGS[@]}"
+        relay_json="{
+  \"type\": \"socks\",
+  \"tag\": \"${tag}\",
+  \"server\": \"${server}\",
+  \"server_port\": ${port},
+  \"version\": \"5\",
+  \"username\": \"${username}\",
+  \"password\": \"${password}\"
+}"
+        relay_desc="SOCKS5 ${server}:${port} (认证)"
+    else
+        local server=$(echo "$data" | cut -d':' -f1)
+        local port=$(echo "$data" | cut -d':' -f2)
+        
+        if ! [[ "$port" =~ ^[0-9]+$ ]]; then
+            print_error "端口无效: ${port}"
+            return 1
+        fi
+        
+        local tag="relay-socks5-${#RELAY_TAGS[@]}"
+        relay_json="{
+  \"type\": \"socks\",
+  \"tag\": \"${tag}\",
+  \"server\": \"${server}\",
+  \"server_port\": ${port},
+  \"version\": \"5\"
+}"
+        relay_desc="SOCKS5 ${server}:${port}"
+    fi
+    
+    RELAY_TAGS+=("$tag")
+    RELAY_JSONS+=("$relay_json")
+    RELAY_DESCS+=("$relay_desc")
+    
+    save_relays_to_file
+    print_success "SOCKS5 中转已添加: ${relay_desc}"
+}
+
+parse_http_link() {
+    local link="$1"
+    local protocol=$(echo "$link" | cut -d':' -f1)
+    local data=$(echo "$link" | sed 's|https\?://||')
+    
+    local tls="false"
+    [[ "$protocol" == "https" ]] && tls="true"
+    
+    local relay_json=""
+    local relay_desc=""
+    local tag="relay-http-${#RELAY_TAGS[@]}"
+    
+    if [[ "$data" =~ @ ]]; then
+        local userpass=$(echo "$data" | cut -d'@' -f1)
+        local username=$(echo "$userpass" | cut -d':' -f1)
+        local password=$(echo "$userpass" | cut -d':' -f2)
+        local server_port=$(echo "$data" | cut -d'@' -f2)
+        local server=$(echo "$server_port" | cut -d':' -f1)
+        local port=$(echo "$server_port" | cut -d':' -f2 | cut -d'/' -f1 | cut -d'#' -f1 | cut -d'?' -f1)
+        
+        relay_json="{
+  \"type\": \"http\",
+  \"tag\": \"${tag}\",
+  \"server\": \"${server}\",
+  \"server_port\": ${port},
+  \"username\": \"${username}\",
+  \"password\": \"${password}\",
+  \"tls\": {\"enabled\": ${tls}}
+}"
+        relay_desc="${protocol^^} ${server}:${port} (认证)"
+    else
+        local server=$(echo "$data" | cut -d':' -f1)
+        local port=$(echo "$data" | cut -d':' -f2 | cut -d'/' -f1 | cut -d'#' -f1 | cut -d'?' -f1)
+        
+        relay_json="{
+  \"type\": \"http\",
+  \"tag\": \"${tag}\",
+  \"server\": \"${server}\",
+  \"server_port\": ${port},
+  \"tls\": {\"enabled\": ${tls}}
+}"
+        relay_desc="${protocol^^} ${server}:${port}"
+    fi
+    
+    RELAY_TAGS+=("$tag")
+    RELAY_JSONS+=("$relay_json")
+    RELAY_DESCS+=("$relay_desc")
+    
+    save_relays_to_file
+    print_success "HTTP(S) 中转已添加: ${relay_desc}"
+}
+
+parse_ss_link() {
+    local link="$1"
+    local data=$(echo "$link" | sed 's|ss://||' | cut -d'#' -f1)
+    
+    if [[ "$data" =~ @ ]]; then
+        local userinfo=$(echo "$data" | cut -d'@' -f1)
+        local server_port=$(echo "$data" | cut -d'@' -f2 | cut -d'?' -f1)
+        local server=$(echo "$server_port" | cut -d':' -f1)
+        local port=$(echo "$server_port" | cut -d':' -f2)
+        
+        local decoded=$(echo "$userinfo" | base64 -d 2>/dev/null)
+        if [[ -z "$decoded" ]]; then
+            print_error "Shadowsocks 链接解码失败"
+            return 1
+        fi
+        
+        local method=$(echo "$decoded" | cut -d':' -f1)
+        local password=$(echo "$decoded" | cut -d':' -f2-)
+        
+        local tag="relay-ss-${#RELAY_TAGS[@]}"
+        local relay_json="{
+  \"type\": \"shadowsocks\",
+  \"tag\": \"${tag}\",
+  \"server\": \"${server}\",
+  \"server_port\": ${port},
+  \"method\": \"${method}\",
+  \"password\": \"${password}\"
+}"
+        local relay_desc="Shadowsocks ${server}:${port}"
+        
+        RELAY_TAGS+=("$tag")
+        RELAY_JSONS+=("$relay_json")
+        RELAY_DESCS+=("$relay_desc")
+        
+        save_relays_to_file
+        print_success "Shadowsocks 中转已添加: ${relay_desc}"
+    else
+        print_error "Shadowsocks 链接格式错误"
+        return 1
+    fi
+}
+
+parse_vmess_link() {
+    local link="$1"
+    local base64_data=$(echo "$link" | sed 's|vmess://||')
+    local json=$(echo "$base64_data" | base64 -d 2>/dev/null)
+    
+    if [[ -z "$json" ]]; then
+        print_error "VMess 链接解码失败"
+        return 1
+    fi
+    
+    if ! command -v jq &>/dev/null; then
+        print_error "需要 jq 工具来解析 VMess 链接"
+        return 1
+    fi
+    
+    local server=$(echo "$json" | jq -r '.add // .address')
+    local port=$(echo "$json" | jq -r '.port')
+    local uuid=$(echo "$json" | jq -r '.id')
+    local alterId=$(echo "$json" | jq -r '.aid // 0')
+    local security=$(echo "$json" | jq -r '.scy // "auto"')
+    
+    local tag="relay-vmess-${#RELAY_TAGS[@]}"
+    local relay_json="{
+  \"type\": \"vmess\",
+  \"tag\": \"${tag}\",
+  \"server\": \"${server}\",
+  \"server_port\": ${port},
+  \"uuid\": \"${uuid}\",
+  \"alter_id\": ${alterId},
+  \"security\": \"${security}\"
+}"
+    local relay_desc="VMess ${server}:${port}"
+    
+    RELAY_TAGS+=("$tag")
+    RELAY_JSONS+=("$relay_json")
+    RELAY_DESCS+=("$relay_desc")
+    
+    save_relays_to_file
+    print_success "VMess 中转已添加: ${relay_desc}"
+}
+
+parse_vless_link() {
+    local link="$1"
+    local data=$(echo "$link" | sed 's|vless://||')
+    local uuid=$(echo "$data" | cut -d'@' -f1)
+    local server_port_params=$(echo "$data" | cut -d'@' -f2)
+    local server=$(echo "$server_port_params" | cut -d':' -f1)
+    local port_params=$(echo "$server_port_params" | cut -d':' -f2)
+    local port=$(echo "$port_params" | cut -d'?' -f1)
+    
+    local params=$(echo "$port_params" | grep -o '?.*' | sed 's|?||' | cut -d'#' -f1)
+    
+    local security="none"
+    local sni=""
+    local flow=""
+    
+    if [[ -n "$params" ]]; then
+        [[ "$params" =~ security=([^&]+) ]] && security="${BASH_REMATCH[1]}"
+        [[ "$params" =~ sni=([^&]+) ]] && sni="${BASH_REMATCH[1]}"
+        [[ "$params" =~ flow=([^&]+) ]] && flow="${BASH_REMATCH[1]}"
+    fi
+    
+    local tls_config=""
+    if [[ "$security" == "tls" || "$security" == "reality" ]]; then
+        tls_config=",
+  \"tls\": {
+    \"enabled\": true,
+    \"server_name\": \"${sni}\"
+  }"
+    fi
+    
+    local flow_config=""
+    [[ -n "$flow" ]] && flow_config=",
+  \"flow\": \"${flow}\""
+    
+    local tag="relay-vless-${#RELAY_TAGS[@]}"
+    local relay_json="{
+  \"type\": \"vless\",
+  \"tag\": \"${tag}\",
+  \"server\": \"${server}\",
+  \"server_port\": ${port},
+  \"uuid\": \"${uuid}\"${flow_config}${tls_config}
+}"
+    local relay_desc="VLESS ${server}:${port}"
+    
+    RELAY_TAGS+=("$tag")
+    RELAY_JSONS+=("$relay_json")
+    RELAY_DESCS+=("$relay_desc")
+    
+    save_relays_to_file
+    print_success "VLESS 中转已添加: ${relay_desc}"
+}
+
+parse_trojan_link() {
+    local link="$1"
+    local data=$(echo "$link" | sed 's|trojan://||')
+    local password=$(echo "$data" | cut -d'@' -f1)
+    local server_port_params=$(echo "$data" | cut -d'@' -f2)
+    local server=$(echo "$server_port_params" | cut -d':' -f1)
+    local port_params=$(echo "$server_port_params" | cut -d':' -f2)
+    local port=$(echo "$port_params" | cut -d'?' -f1)
+    
+    local params=$(echo "$port_params" | grep -o '?.*' | sed 's|?||' | cut -d'#' -f1)
+    
+    local sni=""
+    [[ "$params" =~ sni=([^&]+) ]] && sni="${BASH_REMATCH[1]}"
+    
+    local tag="relay-trojan-${#RELAY_TAGS[@]}"
+    local relay_json="{
+  \"type\": \"trojan\",
+  \"tag\": \"${tag}\",
+  \"server\": \"${server}\",
+  \"server_port\": ${port},
+  \"password\": \"${password}\",
+  \"tls\": {
+    \"enabled\": true,
+    \"server_name\": \"${sni}\"
+  }
+}"
+    local relay_desc="Trojan ${server}:${port}"
+    
+    RELAY_TAGS+=("$tag")
+    RELAY_JSONS+=("$relay_json")
+    RELAY_DESCS+=("$relay_desc")
+    
+    save_relays_to_file
+    print_success "Trojan 中转已添加: ${relay_desc}"
+}
+
 setup_relay() {
     # 加载中转配置
     load_relays_from_file
