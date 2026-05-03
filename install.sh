@@ -49,7 +49,7 @@ INBOUND_PROTOS=()
 INBOUND_RELAY_TAGS=()
 INBOUND_SNIS=()
 
-# 全局密钥（仅用于 Reality 公私钥等不可变部分）
+# 全局密钥
 UUID=""
 REALITY_PRIVATE=""
 REALITY_PUBLIC=""
@@ -89,27 +89,30 @@ detect_system() {
     print_success "系统: ${OS} (${ARCH})"
 }
 
-# ==================== 安装依赖与 sing-box（支持 apt/apk） ====================
-install_deps() {
-    if command -v apt-get &>/dev/null; then
-        apt-get update -qq && apt-get install -y curl wget jq openssl uuid-runtime >/dev/null 2>&1
-    elif command -v apk &>/dev/null; then
-        apk update && apk add curl wget jq openssl util-linux >/dev/null 2>&1
-    else
-        print_error "不支持的包管理器"; exit 1
+# ==================== 依赖安装（独立函数） ====================
+ensure_deps() {
+    print_info "检查系统依赖..."
+    if ! command -v jq &>/dev/null || ! command -v openssl &>/dev/null; then
+        print_info "安装依赖包..."
+        if command -v apt-get &>/dev/null; then
+            apt-get update -qq && apt-get install -y curl wget jq openssl uuid-runtime >/dev/null 2>&1
+        elif command -v apk &>/dev/null; then
+            apk update && apk add curl wget jq openssl util-linux >/dev/null 2>&1
+        else
+            print_error "不支持的包管理器"; return 1
+        fi
     fi
+    print_success "依赖检查完成"
 }
 
+# ==================== 安装 sing-box ====================
 install_singbox() {
-    print_info "检查依赖..."
-    if ! command -v jq &>/dev/null || ! command -v openssl &>/dev/null; then
-        install_deps
-    fi
+    ensure_deps || { print_error "依赖安装失败"; exit 1; }
 
     LATEST=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r '.tag_name' | sed 's/v//')
     [[ -z "$LATEST" ]] && LATEST="1.12.0"
 
-        if command -v sing-box &>/dev/null; then
+    if command -v sing-box &>/dev/null; then
         CURRENT=$(sing-box version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
         [[ -z "$CURRENT" ]] && CURRENT="unknown"
 
@@ -180,7 +183,7 @@ EOF
         chmod +x /etc/init.d/sing-box
         rc-update add sing-box default >/dev/null 2>&1
     fi
-    print_success "sing-box ${LATEST} 安装完成"
+    print_success "sing-box ${LATEST} 安装/更新完成"
 }
 
 # ==================== 证书生成 ====================
@@ -254,6 +257,7 @@ load_links_from_files() {
     [[ -f "${ANYTLS_LINKS_FILE}" ]] && ANYTLS_LINKS=$(cat "${ANYTLS_LINKS_FILE}")
 }
 
+# 从配置文件加载节点信息（使用数组，修复逗号bug）
 load_inbounds_from_config() {
     [[ ! -f "${CONFIG_FILE}" ]] && return 1
     command -v jq &>/dev/null || return 1
@@ -424,8 +428,9 @@ gen_random_hex16() { openssl rand -hex 16; }
 gen_random_base64_16() { openssl rand -base64 16; }
 gen_random_user() { echo "user_$(openssl rand -hex 4)"; }
 
-inbounds_array=()   # 全局JSON数组，彻底避免逗号错误
+inbounds_array=()
 
+# -------------------- Reality --------------------
 setup_reality() {
     echo ""; read_port_with_check 443
     read -p "伪装域名 [${DEFAULT_SNI}]: " SNI; SNI=${SNI:-${DEFAULT_SNI}}
@@ -436,11 +441,22 @@ setup_reality() {
     inbounds_array+=("$inbound")
     INBOUND_TAGS+=("vless-in-${PORT}"); INBOUND_PORTS+=("${PORT}"); INBOUND_PROTOS+=("Reality"); INBOUND_SNIS+=("${SNI}"); INBOUND_RELAY_TAGS+=("direct")
     LINK="vless://${use_uuid}@${SERVER_IP}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI}&fp=chrome&pbk=${REALITY_PUBLIC}&sid=${SHORT_ID}&type=tcp#Reality-${SERVER_IP}"
-    local line="[Reality] ${SERVER_IP}:${PORT} (SNI: ${SNI})\n${LINK}\n----------------------------------------\n\n"
+    local line="[Reality] ${SERVER_IP}:${PORT} (SNI...
     ALL_LINKS_TEXT+="$line"; REALITY_LINKS+="$line"
-    print_success "Reality 添加完成"; save_links_to_files
+    print_success "Reality 添加完成"
+    save_links_to_files
+    echo ""
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${GREEN}✅ 节点链接（可直接复制）:${NC}"
+    echo -e "${YELLOW}${LINK}${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "UUID: ${use_uuid}  |  端口: ${PORT}"
+    echo -e "伪装域名: ${SNI}"
+    echo ""
+    read -p "按回车继续..." _
 }
 
+# -------------------- Hysteria2 --------------------
 setup_hysteria2() {
     echo ""; read_port_with_check 443
     read -p "伪装域名 [${DEFAULT_SNI}]: " HY2_SNI; HY2_SNI=${HY2_SNI:-${DEFAULT_SNI}}
@@ -452,11 +468,22 @@ setup_hysteria2() {
     inbounds_array+=("$inbound")
     INBOUND_TAGS+=("hy2-in-${PORT}"); INBOUND_PORTS+=("${PORT}"); INBOUND_PROTOS+=("Hysteria2"); INBOUND_SNIS+=("${HY2_SNI}"); INBOUND_RELAY_TAGS+=("direct")
     LINK="hysteria2://${use_pass}@${SERVER_IP}:${PORT}?insecure=1&sni=${HY2_SNI}#Hysteria2-${SERVER_IP}"
-    local line="[Hysteria2] ${SERVER_IP}:${PORT} (SNI: ${HY2_SNI})\n${LINK}\n----------------------------------------\n\n"
+    local line="[Hysteria2] ${SERVER_IP}:${PORT} (SNI...
     ALL_LINKS_TEXT+="$line"; HYSTERIA2_LINKS+="$line"
-    print_success "Hysteria2 添加完成"; save_links_to_files
+    print_success "Hysteria2 添加完成"
+    save_links_to_files
+    echo ""
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${GREEN}✅ 节点链接（可直接复制）:${NC}"
+    echo -e "${YELLOW}${LINK}${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "密码: ${use_pass}  |  端口: ${PORT}"
+    echo -e "伪装域名: ${HY2_SNI}"
+    echo ""
+    read -p "按回车继续..." _
 }
 
+# -------------------- SOCKS5 --------------------
 setup_socks5() {
     echo ""; read_port_with_check 1080
     read -p "启用认证? [Y/n]: " ENABLE_AUTH; ENABLE_AUTH=${ENABLE_AUTH:-Y}
@@ -475,9 +502,24 @@ setup_socks5() {
     INBOUND_TAGS+=("socks-in-${PORT}"); INBOUND_PORTS+=("${PORT}"); INBOUND_PROTOS+=("SOCKS5"); INBOUND_SNIS+=(""); INBOUND_RELAY_TAGS+=("direct")
     local line="[SOCKS5] ${SERVER_IP}:${PORT}\n${link}\n----------------------------------------\n\n"
     ALL_LINKS_TEXT+="$line"; SOCKS5_LINKS+="$line"
-    print_success "SOCKS5 添加完成"; save_links_to_files
+    print_success "SOCKS5 添加完成"
+    save_links_to_files
+    echo ""
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${GREEN}✅ 节点链接（可直接复制）:${NC}"
+    echo -e "${YELLOW}${link}${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    if [[ "$ENABLE_AUTH" =~ ^[Yy]$ ]]; then
+        echo -e "用户名: ${use_user}  |  密码: ${use_pass}"
+    else
+        echo -e "无认证"
+    fi
+    echo -e "端口: ${PORT}"
+    echo ""
+    read -p "按回车继续..." _
 }
 
+# -------------------- ShadowTLS --------------------
 setup_shadowtls() {
     echo ""; read_port_with_check 443
     read -p "伪装域名 [${DEFAULT_SNI}]: " SHADOWTLS_SNI; SHADOWTLS_SNI=${SHADOWTLS_SNI:-${DEFAULT_SNI}}
@@ -491,11 +533,22 @@ setup_shadowtls() {
     local plugin_json="{\"version\":\"3\",\"password\":\"${use_stls_pass}\",\"host\":\"${SHADOWTLS_SNI}\",\"port\":\"${PORT}\",\"address\":\"${SERVER_IP}\"}"
     local plugin_b64=$(echo -n "$plugin_json" | base64 -w0 | sed 's/+/-/g; s/\//_/g; s/=//g')
     LINK="ss://${ss_userinfo}@${SERVER_IP}:${PORT}?shadow-tls=${plugin_b64}#ShadowTLS-${SERVER_IP}"
-    local line="[ShadowTLS v3] ${SERVER_IP}:${PORT} (SNI: ${SHADOWTLS_SNI})\n${LINK}\n----------------------------------------\n\n"
+    local line="[ShadowTLS v3] ${SERVER_IP}:${PORT} (SNI...
     ALL_LINKS_TEXT+="$line"; SHADOWTLS_LINKS+="$line"
-    print_success "ShadowTLS 添加完成"; save_links_to_files
+    print_success "ShadowTLS 添加完成"
+    save_links_to_files
+    echo ""
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${GREEN}✅ 节点链接（可直接复制）:${NC}"
+    echo -e "${YELLOW}${LINK}${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "ShadowTLS密码: ${use_stls_pass}  |  SS密码: ${use_ss_pass}"
+    echo -e "端口: ${PORT}  |  伪装域名: ${SHADOWTLS_SNI}"
+    echo ""
+    read -p "按回车继续..." _
 }
 
+# -------------------- HTTPS --------------------
 setup_https() {
     echo ""; read_port_with_check 443
     read -p "伪装域名 [${DEFAULT_SNI}]: " HTTPS_SNI; HTTPS_SNI=${HTTPS_SNI:-${DEFAULT_SNI}}
@@ -506,11 +559,22 @@ setup_https() {
     inbounds_array+=("$inbound")
     INBOUND_TAGS+=("vless-tls-in-${PORT}"); INBOUND_PORTS+=("${PORT}"); INBOUND_PROTOS+=("HTTPS"); INBOUND_SNIS+=("${HTTPS_SNI}"); INBOUND_RELAY_TAGS+=("direct")
     LINK="vless://${use_uuid}@${SERVER_IP}:${PORT}?encryption=none&security=tls&sni=${HTTPS_SNI}&type=tcp&allowInsecure=1#HTTPS-${SERVER_IP}"
-    local line="[HTTPS] ${SERVER_IP}:${PORT} (SNI: ${HTTPS_SNI})\n${LINK}\n----------------------------------------\n\n"
+    local line="[HTTPS] ${SERVER_IP}:${PORT} (SNI...
     ALL_LINKS_TEXT+="$line"; HTTPS_LINKS+="$line"
-    print_success "HTTPS 添加完成"; save_links_to_files
+    print_success "HTTPS 添加完成"
+    save_links_to_files
+    echo ""
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${GREEN}✅ 节点链接（可直接复制）:${NC}"
+    echo -e "${YELLOW}${LINK}${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "UUID: ${use_uuid}  |  端口: ${PORT}"
+    echo -e "伪装域名: ${HTTPS_SNI}"
+    echo ""
+    read -p "按回车继续..." _
 }
 
+# -------------------- AnyTLS --------------------
 setup_anytls() {
     echo ""; read_port_with_check 443
     read -p "伪装域名 [${DEFAULT_SNI}]: " ANYTLS_SNI; ANYTLS_SNI=${ANYTLS_SNI:-${DEFAULT_SNI}}
@@ -521,9 +585,19 @@ setup_anytls() {
     inbounds_array+=("$inbound")
     INBOUND_TAGS+=("anytls-in-${PORT}"); INBOUND_PORTS+=("${PORT}"); INBOUND_PROTOS+=("AnyTLS"); INBOUND_SNIS+=("${ANYTLS_SNI}"); INBOUND_RELAY_TAGS+=("direct")
     LINK="anytls://${use_pass}@${SERVER_IP}:${PORT}?security=tls&fp=chrome&insecure=1&sni=${ANYTLS_SNI}&type=tcp#AnyTLS-${SERVER_IP}"
-    local line="[AnyTLS] ${SERVER_IP}:${PORT} (SNI: ${ANYTLS_SNI})\n${LINK}\n----------------------------------------\n\n"
+    local line="[AnyTLS] ${SERVER_IP}:${PORT} (SNI...
     ALL_LINKS_TEXT+="$line"; ANYTLS_LINKS+="$line"
-    print_success "AnyTLS 添加完成"; save_links_to_files
+    print_success "AnyTLS 添加完成"
+    save_links_to_files
+    echo ""
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${GREEN}✅ 节点链接（可直接复制）:${NC}"
+    echo -e "${YELLOW}${LINK}${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "密码: ${use_pass}  |  端口: ${PORT}"
+    echo -e "伪装域名: ${ANYTLS_SNI}"
+    echo ""
+    read -p "按回车继续..." _
 }
 
 # ==================== 中转链接解析 ====================
@@ -801,8 +875,8 @@ delete_single_node() {
 }
 
 delete_all_nodes() {
-    read -p "确认删除所有节点? (YES): " confirm
-    [[ "$confirm" != "YES" ]] && return
+    read -p "确认删除所有节点? [y/N]: " confirm
+    [[ ! "$confirm" =~ ^[Yy]$ ]] && return
     inbounds_array=(); INBOUND_TAGS=(); INBOUND_PORTS=(); INBOUND_PROTOS=(); INBOUND_SNIS=(); INBOUND_RELAY_TAGS=()
     cat > ${CONFIG_FILE} << EOF
 {"log":{"level":"info"},"dns":{"servers":[{"tag":"local","type":"local"},{"tag":"remote","type":"udp","server":"8.8.8.8"}],"final":"remote"},"inbounds":[],"outbounds":[{"type":"direct","tag":"direct"}],"route":{"final":"direct"}}
@@ -898,7 +972,7 @@ setup_relay() {
 }
 
 delete_self() {
-    read -p "确认完全卸载? (y/N): " confirm
+    read -p "确认完全卸载? [y/N]: " confirm
     [[ ! "$confirm" =~ ^[Yy]$ ]] && return
     if command -v systemctl &>/dev/null; then systemctl stop sing-box; systemctl disable sing-box
     elif command -v rc-service &>/dev/null; then rc-service sing-box stop; rc-update del sing-box; fi
