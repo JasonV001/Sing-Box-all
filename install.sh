@@ -264,18 +264,14 @@ install_singbox() {
 name="sing-box"
 description="sing-box service"
 
-command="/usr/local/bin/sing-box"
-command_args="run -c /etc/sing-box/config.json"
+command="/bin/sh"
+command_args="-c 'exec /usr/local/bin/sing-box run -c /etc/sing-box/config.json >> /var/log/sing-box.log 2>&1'"
 pidfile="/run/${name}.pid"
 required_files="/etc/sing-box/config.json"
 
 supervisor="supervise-daemon"
 respawn_delay=10
 respawn_max=0
-
-# 👇 增加这两行，确保日志写入文件
-stdout_log="/var/log/sing-box.log"
-stderr_log="/var/log/sing-box.log"
 
 depend() {
     need net
