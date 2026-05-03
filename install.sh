@@ -236,42 +236,77 @@ EOF
 # ==================== 安装 sing-box ====================
 install_singbox() {
     print_info "检查依赖和 sing-box..."
-    
-    # ---- 根据系统安装依赖 ----
-        if [[ $ALPINE -eq 1 ]]; then
-        # Alpine: 基础工具 + glibc 兼容层（运行 sing-box 需要）
-        apk add --no-cache curl wget jq openssl util-linux coreutils gcompat >/dev/null 2>&1
+
+    # ---- 内存检测 ----
+    local low_mem=0
+    local mem_avail_kb=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo 2>/dev/null)
+    if [[ -n "$mem_avail_kb" && "$mem_avail_kb" -lt 262144 ]]; then   # 256MB = 262144 KB
+        low_mem=1
+        print_warning "可用内存小于 256MB，将采用分步安装以避免 OOM"
+    fi
+
+    # ---- 安装系统依赖 ----
+    if [[ $ALPINE -eq 1 ]]; then
+        if [[ $low_mem -eq 1 ]]; then
+            print_info "Alpine：分步安装依赖（保护小内存）..."
+            for pkg in curl wget jq openssl util-linux coreutils gcompat; do
+                apk add --no-cache "$pkg" >/dev/null 2>&1
+                sleep 1
+            done
+        else
+            apk add --no-cache curl wget jq openssl util-linux coreutils gcompat >/dev/null 2>&1
+        fi
     else
         if ! command -v jq &>/dev/null || ! command -v openssl &>/dev/null; then
-            apt-get update -qq && apt-get install -y curl wget jq openssl uuid-runtime >/dev/null 2>&1
+            if [[ $low_mem -eq 1 ]]; then
+                print_info "Debian：分步安装依赖..."
+                apt-get update -qq
+                for pkg in curl wget jq openssl uuid-runtime; do
+                    apt-get install -y "$pkg" >/dev/null 2>&1
+                    sleep 1
+                done
+            else
+                apt-get update -qq && apt-get install -y curl wget jq openssl uuid-runtime >/dev/null 2>&1
+            fi
         fi
     fi
-    
-    # ---- 安装 sing-box 二进制 ----
+
+    # ---- 检查 sing-box 是否已安装 ----
     if command -v sing-box &>/dev/null; then
         local version=$(sing-box version 2>&1 | grep -oP 'sing-box version \K[0-9.]+' || echo "unknown")
         print_success "sing-box 已安装 (版本: ${version})"
         return 0
     fi
-    
-    print_info "下载并安装 sing-box..."
+
+    # ---- 获取最新版本 ----
+    print_info "检测最新版本..."
     LATEST=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r '.tag_name' | sed 's/v//')
-    
-    if [[ -z "$LATEST" ]]; then
-        LATEST="1.12.0"
-    fi
-    
+    [[ -z "$LATEST" ]] && LATEST="1.12.0"
     print_info "目标版本: ${LATEST}"
-    
-    wget -q --show-progress -O /tmp/sb.tar.gz "https://github.com/SagerNet/sing-box/releases/download/v${LATEST}/sing-box-${LATEST}-linux-${ARCH}.tar.gz" 2>&1
-    
-    tar -xzf /tmp/sb.tar.gz -C /tmp
+
+    # ---- 下载、解压、安装（根据内存情况调整步骤） ----
+    if [[ $low_mem -eq 1 ]]; then
+        print_info "下载 sing-box (linux-${ARCH}) ..."
+        wget -q --show-progress -O /tmp/sb.tar.gz \
+            "https://github.com/SagerNet/sing-box/releases/download/v${LATEST}/sing-box-${LATEST}-linux-${ARCH}.tar.gz" 2>&1
+        sleep 2   # 等待磁盘/内存缓冲释放
+
+        print_info "解压 sing-box ..."
+        tar -xzf /tmp/sb.tar.gz -C /tmp
+        rm -f /tmp/sb.tar.gz
+    else
+        wget -q --show-progress -O /tmp/sb.tar.gz \
+            "https://github.com/SagerNet/sing-box/releases/download/v${LATEST}/sing-box-${LATEST}-linux-${ARCH}.tar.gz" 2>&1
+        tar -xzf /tmp/sb.tar.gz -C /tmp
+        rm -f /tmp/sb.tar.gz
+    fi
+
+    # 安装二进制并清理
     install -Dm755 /tmp/sing-box-${LATEST}-linux-${ARCH}/sing-box ${INSTALL_DIR}/sing-box
-    rm -rf /tmp/sb.tar.gz /tmp/sing-box-*
-    
-    # ---- 创建服务文件 ----
+    rm -rf /tmp/sing-box-${LATEST}-linux-${ARCH}
+
+    # ---- 创建服务文件（保留原逻辑，已内置 stdout/stderr 重定向） ----
     if [[ $ALPINE -eq 1 ]]; then
-        # OpenRC 服务脚本 (使用 supervise-daemon 实现崩溃自动重启)
         cat > /etc/init.d/sing-box << 'EOF'
 #!/sbin/openrc-run
 
@@ -293,10 +328,8 @@ depend() {
 }
 EOF
         chmod +x /etc/init.d/sing-box
-        # 启用 cgroups 服务（supervise-daemon 可能需要）
         rc-update add cgroups default >/dev/null 2>&1
     else
-        # systemd 服务文件
         cat > /etc/systemd/system/sing-box.service << 'EOFSVC'
 [Unit]
 Description=sing-box service
@@ -315,13 +348,13 @@ WantedBy=multi-user.target
 EOFSVC
         systemctl daemon-reload
     fi
-    
-        # 开机自启
+
+    # 开机自启
     svc_enable
 
     # 首次安装时自动配置日志清理
     setup_log_cleanup
-    
+
     print_success "sing-box 安装完成 (版本: ${LATEST})"
 }
 # ==================== 证书生成 ====================
