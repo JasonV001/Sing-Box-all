@@ -2207,6 +2207,7 @@ EOFCONFIG
 }
 
 start_svc() {
+    export ENABLE_DEPRECATED_LEGACY_DNS_SERVERS=true   # ← 新增这一行
     print_info "验证配置文件..."
     
     # 捕获验证输出
