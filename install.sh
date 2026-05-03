@@ -287,7 +287,7 @@ install_singbox() {
 
         # 小内存机器解压时很可能被杀，解压前确保文件完整
         print_info "解压 sing-box ..."
-        if tar -xzf /tmp/sb.tar.gz -C /tmp 2>/dev/null; then
+        if tar -xzf /tmp/sb.tar.gz -C /tmp 4>/dev/null; then
             rm -f /tmp/sb.tar.gz
         else
             print_error "解压失败（可能内存不足被 kill），请增加 swap 后重新运行脚本"
