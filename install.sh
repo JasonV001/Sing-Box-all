@@ -2149,11 +2149,12 @@ generate_config() {
     "servers": [
       {
         "tag": "local",
-        "address": "local"
+        "type": "local"
       },
       {
         "tag": "remote",
-        "address": "8.8.8.8"
+        "type": "udp",
+        "server": "8.8.8.8"
       }
     ],
     "final": "remote",
@@ -2164,11 +2165,12 @@ generate_config() {
     "servers": [
       {
         "tag": "local",
-        "address": "local"
+        "type": "local"
       },
       {
         "tag": "remote",
-        "address": "8.8.8.8"
+        "type": "udp",
+        "server": "8.8.8.8"
       }
     ],
     "final": "remote"
@@ -2178,11 +2180,12 @@ generate_config() {
     "servers": [
       {
         "tag": "local",
-        "address": "local"
+        "type": "local"
       },
       {
         "tag": "remote",
-        "address": "8.8.8.8"
+        "type": "udp",
+        "server": "8.8.8.8"
       }
     ],
     "final": "remote",
@@ -2207,7 +2210,6 @@ EOFCONFIG
 }
 
 start_svc() {
-    export ENABLE_DEPRECATED_LEGACY_DNS_SERVERS=true   # ← 新增这一行
     print_info "验证配置文件..."
     
     # 捕获验证输出
