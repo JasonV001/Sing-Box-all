@@ -186,8 +186,13 @@ setup_log_cleanup() {
     print_info "配置日志自动清理（7天 / 100M）..."
 
     if [[ $ALPINE -eq 1 ]]; then
-        apk add --no-cache logrotate dcron >/dev/null 2>&1
+        # 安装 logrotate 和 dcron，打印错误以便排错
+        apk add --no-cache logrotate dcron || {
+            print_error "安装 logrotate/dcron 失败，请检查网络或 apk 源"
+            return 1
+        }
 
+        # 创建 logrotate 配置
         cat > /etc/logrotate.d/sing-box << 'EOF'
 /var/log/sing-box.log {
     daily
@@ -201,8 +206,16 @@ setup_log_cleanup() {
 }
 EOF
 
+        # 确保 dcron 在默认运行级别并启动
         rc-update add dcron default 2>/dev/null
         rc-service dcron start 2>/dev/null
+
+        # 等待服务启动，然后检查状态
+        sleep 1
+        if ! rc-service dcron status | grep -q started; then
+            print_error "dcron 服务启动失败，请手动检查"
+            return 1
+        fi
 
         print_success "Alpine 日志清理已配置（logrotate + dcron）"
     else
@@ -216,6 +229,7 @@ EOF
         print_success "systemd journald 日志限制已生效"
     fi
 
+    # 仅在全部成功后创建标记文件
     mkdir -p "$(dirname "${LOGROTATE_FLAG}")"
     touch "${LOGROTATE_FLAG}"
 }
