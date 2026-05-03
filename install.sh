@@ -733,153 +733,600 @@ regenerate_all_links() {
         return 1
     fi
 }
-# ==================== 配置生成 ====================
-generate_config() {
-    print_info "生成最终配置文件..."
-    [[ -z "$INBOUNDS_JSON" ]] && { print_error "未找到任何入站节点，请先添加节点"; return 1; }
-    load_relays_from_file
-
-    local outbounds_array=()
-    for relay_json in "${RELAY_JSONS[@]}"; do outbounds_array+=("$relay_json"); done
-    outbounds_array+=('{"type": "direct", "tag": "direct"}')
-    local outbounds="["
-    for i in "${!outbounds_array[@]}"; do
-        [[ $i -gt 0 ]] && outbounds+=", "
-        outbounds+="${outbounds_array[$i]}"
-    done
-    outbounds+="]"
-
-    local route_rules=()
-    for i in "${!INBOUND_TAGS[@]}"; do
-        local rt="${INBOUND_RELAY_TAGS[$i]}"
-        [[ "$rt" != "direct" ]] && route_rules+=("{\"inbound\":[\"${INBOUND_TAGS[$i]}\"],\"outbound\":\"${rt}\"}")
-    done
-
-    local route_json
-    if [[ ${#route_rules[@]} -gt 0 ]]; then
-        route_json="{\"rules\":["
-        for i in "${!route_rules[@]}"; do
-            [[ $i -gt 0 ]] && route_json+=","
-            route_json+="${route_rules[$i]}"
-        done
-        route_json+="],\"final\":\"direct\",\"default_domain_resolver\":\"local\"}"
-    else
-        route_json="{\"final\":\"direct\",\"default_domain_resolver\":\"local\"}"
+# ==================== 协议选择菜单 ====================
+show_menu() {
+    show_banner
+    echo -e "${YELLOW}请选择要添加的协议节点:${NC}"
+    echo ""
+    echo -e "${GREEN}[1]${NC} VlessReality ${CYAN}→ 抗审查最强，伪装真实TLS，无需证书${NC} ${YELLOW}(⭐ 强烈推荐)${NC}"
+    echo ""
+    echo -e "${GREEN}[2]${NC} Hysteria2 ${CYAN}→ 基于QUIC，速度快，垃圾线路专用${NC}"
+    echo ""
+    echo -e "${GREEN}[3]${NC} SOCKS5 ${CYAN}→ 适合中转的代理协议${NC}"
+    echo ""
+    echo -e "${GREEN}[4]${NC} ShadowTLS v3 ${CYAN}→ TLS流量伪装${NC}"
+    echo ""
+    echo -e "${GREEN}[5]${NC} HTTPS ${CYAN}→ 标准HTTPS，可过CDN${NC}"
+    echo ""
+    echo -e "${GREEN}[6]${NC} AnyTLS ${CYAN}→ 通用TLS协议${NC}"
+    echo ""
+    read -p "选择 [1-6]: " choice
+    
+    case $choice in
+        1) setup_reality ;;
+        2) setup_hysteria2 ;;
+        3) setup_socks5 ;;
+        4) setup_shadowtls ;;
+        5) setup_https ;;
+        6) setup_anytls ;;
+        *) print_error "无效选项"; return 1 ;;
+    esac
+    
+    if [[ -n "$INBOUNDS_JSON" ]]; then
+        generate_config || return 1
+        start_svc || return 1
     fi
+}
 
-    # DNS 配置（使用 sing-box 新格式）
-    local dns_json
-    dns_json='{
-    "servers": [
-      {"tag": "local", "type": "local"},
-      {"tag": "remote", "type": "udp", "server": "8.8.8.8"}
-    ],
-    "final": "remote"'
-    [[ "$OUTBOUND_IP_MODE" == "ipv6" ]] && dns_json+=',"strategy": "prefer_ipv6"'
-    [[ "$OUTBOUND_IP_MODE" == "ipv4" ]] && dns_json+=',"strategy": "prefer_ipv4"'
-    dns_json+='}'
+# ==================== 配置查看菜单 ====================
+config_and_view_menu() {
+    while true; do
+        show_banner
+        echo -e "${CYAN}╔═══════════════════════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║              ${GREEN}配置 / 查看节点菜单${CYAN}        ║${NC}"
+        echo -e "${CYAN}╚═══════════════════════════════════════════════════════╝${NC}"
+        echo ""
+        echo -e "  ${GREEN}[1]${NC} 重新加载配置并启动服务"
+        echo ""
+        echo -e "  ${GREEN}[2]${NC} 查看全部节点链接"
+        echo ""
+        echo -e "  ${GREEN}[3]${NC} 查看 Reality 节点"
+        echo ""
+        echo -e "  ${GREEN}[4]${NC} 查看 Hysteria2 节点"
+        echo ""
+        echo -e "  ${GREEN}[5]${NC} 查看 SOCKS5 节点"
+        echo ""
+        echo -e "  ${GREEN}[6]${NC} 查看 ShadowTLS 节点"
+        echo ""
+        echo -e "  ${GREEN}[7]${NC} 查看 HTTPS 节点"
+        echo ""
+        echo -e "  ${GREEN}[8]${NC} 查看 AnyTLS 节点"
+        echo ""
+        echo -e "  ${GREEN}[9]${NC} 删除单个节点"
+        echo ""
+        echo -e "  ${GREEN}[10]${NC} 删除全部节点"
+        echo ""
+        echo -e "  ${GREEN}[0]${NC} 返回主菜单"
+        echo ""
+        
+        read -p "请选择 [0-10]: " cv_choice
+        
+        case $cv_choice in
+            1)
+                if [[ -f "${CONFIG_FILE}" ]]; then
+                    generate_config && start_svc
+                    print_success "配置已重新加载并启动服务"
+                else
+                    print_error "配置文件不存在，请先添加节点"
+                fi
+                read -p "按回车返回..." _
+                ;;
+            2)
+                clear
+                echo -e "${YELLOW}全部节点链接:${NC}"
+                echo ""
+                if [[ -z "$ALL_LINKS_TEXT" ]]; then
+                    echo "(暂无节点)"
+                else
+                    echo -e "$ALL_LINKS_TEXT"
+                fi
+                echo ""
+                read -p "按回车返回..." _
+                ;;
+            3)
+                clear
+                echo -e "${YELLOW}Reality 节点:${NC}"
+                echo ""
+                if [[ -z "$REALITY_LINKS" ]]; then
+                    echo "(暂无 Reality 节点)"
+                else
+                    echo -e "$REALITY_LINKS"
+                fi
+                echo ""
+                read -p "按回车返回..." _
+                ;;
+            4)
+                clear
+                echo -e "${YELLOW}Hysteria2 节点:${NC}"
+                echo ""
+                if [[ -z "$HYSTERIA2_LINKS" ]]; then
+                    echo "(暂无 Hysteria2 节点)"
+                else
+                    echo -e "$HYSTERIA2_LINKS"
+                fi
+                echo ""
+                read -p "按回车返回..." _
+                ;;
+            5)
+                clear
+                echo -e "${YELLOW}SOCKS5 节点:${NC}"
+                echo ""
+                if [[ -z "$SOCKS5_LINKS" ]]; then
+                    echo "(暂无 SOCKS5 节点)"
+                else
+                    echo -e "$SOCKS5_LINKS"
+                fi
+                echo ""
+                read -p "按回车返回..." _
+                ;;
+            6)
+                clear
+                echo -e "${YELLOW}ShadowTLS 节点:${NC}"
+                echo ""
+                if [[ -z "$SHADOWTLS_LINKS" ]]; then
+                    echo "(暂无 ShadowTLS 节点)"
+                else
+                    echo -e "$SHADOWTLS_LINKS"
+                    echo -e "${CYAN}提示: 可直接复制上方 ss:// 链接导入客户端${NC}"
+                fi
+                echo ""
+                read -p "按回车返回..." _
+                ;;
+            7)
+                clear
+                echo -e "${YELLOW}HTTPS 节点:${NC}"
+                echo ""
+                if [[ -z "$HTTPS_LINKS" ]]; then
+                    echo "(暂无 HTTPS 节点)"
+                else
+                    echo -e "$HTTPS_LINKS"
+                fi
+                echo ""
+                read -p "按回车返回..." _
+                ;;
+            8)
+                clear
+                echo -e "${YELLOW}AnyTLS 节点:${NC}"
+                echo ""
+                if [[ -z "$ANYTLS_LINKS" ]]; then
+                    echo "(暂无 AnyTLS 节点)"
+                else
+                    echo -e "$ANYTLS_LINKS"
+                fi
+                echo ""
+                read -p "按回车返回..." _
+                ;;
+            9)
+                delete_single_node
+                read -p "按回车返回..." _
+                ;;
+            10)
+                delete_all_nodes
+                read -p "按回车返回..." _
+                ;;
+            0)
+                break
+                ;;
+            *)
+                print_error "无效选项"
+                ;;
+        esac
+    done
+}
 
+# ==================== 节点删除 ====================
+delete_single_node() {
+    if [[ ${#INBOUND_TAGS[@]} -eq 0 ]]; then
+        print_warning "当前没有可删除的节点"
+        return 1
+    fi
+    
+    echo ""
+    echo -e "${CYAN}当前节点列表:${NC}"
+    for i in "${!INBOUND_TAGS[@]}"; do
+        idx=$((i+1))
+        echo -e "  ${GREEN}[${idx}]${NC} 协议: ${INBOUND_PROTOS[$i]}, 端口: ${INBOUND_PORTS[$i]}, SNI: ${INBOUND_SNIS[$i]}, TAG: ${INBOUND_TAGS[$i]}"
+    done
+    echo ""
+    echo -e "${RED}警告: 删除节点后无法恢复！${NC}"
+    read -p "请输入要删除的节点序号 (输入 0 取消): " node_idx
+    
+    if [[ "$node_idx" == "0" ]]; then
+        print_info "取消删除操作"
+        return 0
+    fi
+    
+    if ! [[ "$node_idx" =~ ^[0-9]+$ ]] || (( node_idx < 1 || node_idx > ${#INBOUND_TAGS[@]} )); then
+        print_error "序号无效"
+        return 1
+    fi
+    
+    local index=$((node_idx-1))
+    local tag="${INBOUND_TAGS[$index]}"
+    local port="${INBOUND_PORTS[$index]}"
+    local proto="${INBOUND_PROTOS[$index]}"
+    local sni="${INBOUND_SNIS[$index]}"
+    
+    echo ""
+    echo -e "${YELLOW}确认删除以下节点:${NC}"
+    echo -e "  协议: ${proto}"
+    echo -e "  端口: ${port}"
+    echo -e "  SNI: ${sni}"
+    echo -e "  TAG: ${tag}"
+    echo ""
+    
+    read -p "确认删除? (y/N): " confirm_delete
+    confirm_delete=${confirm_delete:-N}
+    
+    if [[ ! "$confirm_delete" =~ ^[Yy]$ ]]; then
+        print_info "取消删除操作"
+        return 0
+    fi
+    
+    if [[ -f "${CONFIG_FILE}" ]] && command -v jq &>/dev/null; then
+        local temp_config=$(mktemp)
+        if [[ "$proto" == "ShadowTLS v3" ]]; then
+            local ss_tag="shadowsocks-in-${port}"
+            jq --arg tag "$tag" --arg ss_tag "$ss_tag" '.inbounds |= map(select(.tag != $tag and .tag != $ss_tag))' "${CONFIG_FILE}" > "$temp_config"
+        else
+            jq --arg tag "$tag" '.inbounds |= map(select(.tag != $tag))' "${CONFIG_FILE}" > "$temp_config"
+        fi
+        mv "$temp_config" "${CONFIG_FILE}"
+        
+        unset INBOUND_TAGS[$index]
+        unset INBOUND_PORTS[$index]
+        unset INBOUND_PROTOS[$index]
+        unset INBOUND_SNIS[$index]
+        unset INBOUND_RELAY_TAGS[$index]
+        
+        INBOUND_TAGS=("${INBOUND_TAGS[@]}")
+        INBOUND_PORTS=("${INBOUND_PORTS[@]}")
+        INBOUND_PROTOS=("${INBOUND_PROTOS[@]}")
+        INBOUND_SNIS=("${INBOUND_SNIS[@]}")
+        INBOUND_RELAY_TAGS=("${INBOUND_RELAY_TAGS[@]}")
+        
+        load_inbounds_from_config
+        regenerate_links_from_config
+        
+        if command -v systemctl &>/dev/null; then
+            systemctl restart sing-box
+            sleep 2
+            systemctl is-active --quiet sing-box && print_success "节点已删除，服务已重启" || print_error "服务重启失败"
+        elif command -v rc-service &>/dev/null; then
+            rc-service sing-box restart
+            print_success "节点已删除"
+        fi
+    else
+        print_error "无法删除节点"
+        return 1
+    fi
+}
+
+delete_all_nodes() {
+    echo ""
+    echo -e "${RED}⚠️  警告: 此操作将删除所有节点配置！${NC}"
+    echo -e "${YELLOW}当前共有 ${#INBOUND_TAGS[@]} 个节点${NC}"
+    echo ""
+    read -p "确认删除所有节点? (输入 'YES' 确认): " confirm_delete
+    
+    if [[ "$confirm_delete" != "YES" ]]; then
+        print_info "取消删除操作"
+        return 0
+    fi
+    
+    INBOUNDS_JSON=""
+    INBOUND_TAGS=()
+    INBOUND_PORTS=()
+    INBOUND_PROTOS=()
+    INBOUND_SNIS=()
+    INBOUND_RELAY_TAGS=()
+    
     cat > ${CONFIG_FILE} << EOFCONFIG
 {
   "log": {"level": "info", "timestamp": true},
-  "dns": ${dns_json},
-  "inbounds": [${INBOUNDS_JSON}],
-  "outbounds": ${outbounds},
-  "route": ${route_json}
+  "dns": {
+    "servers": [{"tag": "local", "type": "local"}, {"tag": "remote", "type": "udp", "server": "8.8.8.8"}],
+    "final": "remote"
+  },
+  "inbounds": [],
+  "outbounds": [{"type": "direct", "tag": "direct"}],
+  "route": {"final": "direct", "default_domain_resolver": "local"}
 }
 EOFCONFIG
-    print_success "配置文件生成完成"
-}
-
-start_svc() {
-    print_info "验证配置文件..."
-    ${INSTALL_DIR}/sing-box check -c ${CONFIG_FILE} >/dev/null 2>&1 || { print_error "配置验证失败"; cat ${CONFIG_FILE}; return 1; }
+    
     if command -v systemctl &>/dev/null; then
-        systemctl restart sing-box; sleep 2
-        systemctl is-active --quiet sing-box && print_success "服务启动成功" || { print_error "启动失败"; journalctl -u sing-box -n 10 --no-pager; return 1; }
+        systemctl stop sing-box 2>/dev/null || true
     elif command -v rc-service &>/dev/null; then
-        rc-service sing-box restart; sleep 2
-        rc-service sing-box status &>/dev/null && print_success "服务启动成功" || print_error "启动失败"
+        rc-service sing-box stop 2>/dev/null || true
+    fi
+    
+    cleanup_links
+    print_success "所有节点已删除，配置文件已重置"
+    
+    read -p "是否启动空配置的 sing-box 服务? (y/N): " restart_service
+    restart_service=${restart_service:-N}
+    if [[ "$restart_service" =~ ^[Yy]$ ]]; then
+        start_svc
     fi
 }
 
-# ==================== 保活（cron） ====================
+# ==================== 中转管理菜单 ====================
+setup_relay() {
+    load_relays_from_file
+    
+    while true; do
+        echo ""
+        echo -e "${CYAN}╔═══════════════════════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║              ${GREEN}中转配置菜单${CYAN}                  ║${NC}"
+        echo -e "${CYAN}╚═══════════════════════════════════════════════════════╝${NC}"
+        echo ""
+        
+        if [[ ${#RELAY_TAGS[@]} -gt 0 ]]; then
+            echo -e "${YELLOW}当前中转列表:${NC}"
+            for i in "${!RELAY_TAGS[@]}"; do
+                idx=$((i+1))
+                echo -e "  ${GREEN}[${idx}]${NC} ${RELAY_DESCS[$i]}"
+            done
+            echo ""
+        else
+            echo -e "${YELLOW}当前没有配置中转${NC}"
+            echo ""
+        fi
+        
+        echo -e "  ${GREEN}[1]${NC} 添加新的中转链接"
+        echo -e "  ${GREEN}[2]${NC} 为节点配置中转"
+        echo -e "  ${GREEN}[3]${NC} 删除中转链接"
+        echo -e "  ${GREEN}[0]${NC} 返回主菜单"
+        echo ""
+        read -p "请选择 [0-3]: " r_choice
+        
+        case $r_choice in
+            1)
+                echo ""
+                echo -e "${CYAN}支持的中转协议格式:${NC}"
+                echo -e "  SOCKS5, HTTP(S), Shadowsocks, VMess, VLESS, Trojan"
+                echo -e "  直接粘贴分享链接即可"
+                read -p "粘贴中转链接: " RELAY_LINK
+                if [[ -n "$RELAY_LINK" ]]; then
+                    if [[ "$RELAY_LINK" =~ ^socks ]]; then parse_socks_link "$RELAY_LINK"
+                    elif [[ "$RELAY_LINK" =~ ^https? ]]; then parse_http_link "$RELAY_LINK"
+                    elif [[ "$RELAY_LINK" =~ ^ss:// ]]; then parse_ss_link "$RELAY_LINK"
+                    elif [[ "$RELAY_LINK" =~ ^vmess:// ]]; then parse_vmess_link "$RELAY_LINK"
+                    elif [[ "$RELAY_LINK" =~ ^vless:// ]]; then parse_vless_link "$RELAY_LINK"
+                    elif [[ "$RELAY_LINK" =~ ^trojan:// ]]; then parse_trojan_link "$RELAY_LINK"
+                    else print_error "不支持的链接格式"
+                    fi
+                fi
+                ;;
+            2)
+                if [[ ${#INBOUND_TAGS[@]} -eq 0 ]]; then
+                    print_warning "请先添加节点"; continue
+                fi
+                if [[ ${#RELAY_TAGS[@]} -eq 0 ]]; then
+                    print_warning "请先添加中转"; continue
+                fi
+                echo -e "选择要配置中转的节点:"
+                for i in "${!INBOUND_TAGS[@]}"; do
+                    idx=$((i+1))
+                    local rt="${INBOUND_RELAY_TAGS[$i]}"
+                    local desc="直连"
+                    if [[ "$rt" != "direct" ]]; then
+                        for j in "${!RELAY_TAGS[@]}"; do
+                            [[ "${RELAY_TAGS[$j]}" == "$rt" ]] && desc="中转: ${RELAY_DESCS[$j]}" && break
+                        done
+                    fi
+                    echo -e "  ${GREEN}[${idx}]${NC} ${INBOUND_PROTOS[$i]}:${INBOUND_PORTS[$i]} → ${YELLOW}${desc}${NC}"
+                done
+                read -p "节点序号: " node_idx
+                if [[ "$node_idx" =~ ^[0-9]+$ ]] && (( node_idx >= 1 && node_idx <= ${#INBOUND_TAGS[@]} )); then
+                    local n=$((node_idx-1))
+                    echo -e "选择中转: [0] 直连"
+                    for i in "${!RELAY_TAGS[@]}"; do echo -e "  ${GREEN}[$((i+1))]${NC} ${RELAY_DESCS[$i]}"; done
+                    read -p "中转序号: " relay_idx
+                    if [[ "$relay_idx" == "0" ]]; then
+                        INBOUND_RELAY_TAGS[$n]="direct"
+                    elif [[ "$relay_idx" =~ ^[0-9]+$ ]] && (( relay_idx >= 1 && relay_idx <= ${#RELAY_TAGS[@]} )); then
+                        INBOUND_RELAY_TAGS[$n]="${RELAY_TAGS[$((relay_idx-1))]}"
+                    else continue; fi
+                    generate_config && start_svc
+                fi
+                ;;
+            3)
+                if [[ ${#RELAY_TAGS[@]} -eq 0 ]]; then continue; fi
+                for i in "${!RELAY_TAGS[@]}"; do echo -e "  ${GREEN}[$((i+1))]${NC} ${RELAY_DESCS[$i]}"; done
+                read -p "删除序号 (0全部, -1取消): " del_idx
+                if [[ "$del_idx" == "0" ]]; then
+                    RELAY_TAGS=(); RELAY_JSONS=(); RELAY_DESCS=(); rm -f "${RELAY_FILE}"
+                    INBOUND_RELAY_TAGS=("${INBOUND_RELAY_TAGS[@]/*/direct}")
+                    save_relays_to_file; generate_config && start_svc
+                elif [[ "$del_idx" =~ ^[0-9]+$ ]] && (( del_idx >= 1 && del_idx <= ${#RELAY_TAGS[@]} )); then
+                    local d=$((del_idx-1))
+                    local del_tag="${RELAY_TAGS[$d]}"
+                    unset RELAY_TAGS[$d]; unset RELAY_JSONS[$d]; unset RELAY_DESCS[$d]
+                    RELAY_TAGS=("${RELAY_TAGS[@]}"); RELAY_JSONS=("${RELAY_JSONS[@]}"); RELAY_DESCS=("${RELAY_DESCS[@]}")
+                    for i in "${!INBOUND_RELAY_TAGS[@]}"; do
+                        [[ "${INBOUND_RELAY_TAGS[$i]}" == "$del_tag" ]] && INBOUND_RELAY_TAGS[$i]="direct"
+                    done
+                    save_relays_to_file; generate_config && start_svc
+                fi
+                ;;
+            0) break ;;
+            *) print_error "无效选项" ;;
+        esac
+    done
+}
+
+# ==================== IP 配置菜单 ====================
+ip_config_menu() {
+    while true; do
+        clear
+        echo -e "${CYAN}╔═══════════════════════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║              ${GREEN}出入站 IP 配置${CYAN}                ║${NC}"
+        echo -e "${CYAN}╚═══════════════════════════════════════════════════════╝${NC}"
+        echo ""
+        echo -e "${YELLOW}当前配置:${NC}"
+        echo -e "  IPv4 地址: ${GREEN}${SERVER_IP}${NC}"
+        [[ -n "$SERVER_IPV6" ]] && echo -e "  IPv6 地址: ${GREEN}${SERVER_IPV6}${NC}"
+        echo -e "  入站模式: ${GREEN}${INBOUND_IP_MODE}${NC}"
+        echo -e "  出站模式: ${GREEN}${OUTBOUND_IP_MODE}${NC}"
+        echo ""
+        echo -e "  ${GREEN}[1]${NC} 设置入站为 IPv4"
+        echo -e "  ${GREEN}[2]${NC} 设置入站为 IPv6"
+        echo -e "  ${GREEN}[3]${NC} 设置出站为 IPv4"
+        echo -e "  ${GREEN}[4]${NC} 设置出站为 IPv6"
+        echo -e "  ${GREEN}[5]${NC} 设置出站为双栈 (IPv4+IPv6)"
+        echo -e "  ${GREEN}[6]${NC} 手动修改 IPv4 地址"
+        echo -e "  ${GREEN}[7]${NC} 手动修改 IPv6 地址"
+        echo -e "  ${GREEN}[0]${NC} 返回主菜单"
+        echo ""
+        read -p "请选择 [0-7]: " ip_choice
+        
+        case $ip_choice in
+            1) INBOUND_IP_MODE="ipv4"; save_ip_config ;;
+            2) INBOUND_IP_MODE="ipv6"; save_ip_config ;;
+            3) OUTBOUND_IP_MODE="ipv4"; save_ip_config ;;
+            4) OUTBOUND_IP_MODE="ipv6"; save_ip_config ;;
+            5) OUTBOUND_IP_MODE="dual"; save_ip_config ;;
+            6) read -p "请输入 IPv4 地址: " new_ipv4; [[ -n "$new_ipv4" ]] && SERVER_IP="$new_ipv4" && save_ip_config ;;
+            7) read -p "请输入 IPv6 地址: " new_ipv6; [[ -n "$new_ipv6" ]] && SERVER_IPV6="$new_ipv6" && save_ip_config ;;
+            0) break ;;
+            *) print_error "无效选项" ;;
+        esac
+        [[ "$ip_choice" != "0" ]] && read -p "按回车继续..." _
+    done
+}
+
+# ==================== 保活（cron + 开机自启 cron） ====================
 setup_keepalive() {
+    # 确保 cron 守护进程已启动且开机自启（Alpine 需手动处理）
+    if command -v systemctl &>/dev/null; then
+        systemctl enable cron 2>/dev/null || systemctl enable crond 2>/dev/null || true
+        systemctl start cron 2>/dev/null || systemctl start crond 2>/dev/null || true
+    elif command -v rc-service &>/dev/null; then
+        rc-update add crond default 2>/dev/null || true
+        rc-service crond start 2>/dev/null || true
+    fi
+
     local keepalive_cmd="*/5 * * * * root pgrep sing-box >/dev/null || (systemctl restart sing-box 2>/dev/null || rc-service sing-box restart)"
     if [[ -f /etc/cron.d/sing-box-keepalive ]]; then
         print_info "保活任务已存在"
     else
         echo "$keepalive_cmd" > /etc/cron.d/sing-box-keepalive
-        print_success "已添加保活任务（每5分钟检查）"
+        print_success "已添加保活任务（每5分钟检查，重启后自动生效）"
     fi
     case $1 in
         enable) : ;;
-        disable) rm -f /etc/cron.d/sing-box-keepalive; print_success "已关闭保活" ;;
+        disable) rm -f /etc/cron.d/sing-box-keepalive; print_success "已关闭保活任务" ;;
     esac
 }
 
-# ==================== 主菜单 & 子菜单 ====================
-show_main_menu() {
-    show_banner
-    echo -e "${CYAN}╔═══════════════════════════════╗"
-    echo -e "║      Sing-Box 管理面板        ║"
-    echo -e "╚═══════════════════════════════╝${NC}"
-    echo -e "当前IP: ${GREEN}${SERVER_IP}${NC}  入站:${INBOUND_IP_MODE} 出站:${OUTBOUND_IP_MODE}"
-    echo -e "节点数: ${#INBOUND_TAGS[@]}"
-    echo -e "  ${GREEN}[1]${NC} 添加节点"
-    echo -e "  ${GREEN}[2]${NC} 中转配置"
-    echo -e "  ${GREEN}[3]${NC} IP 配置"
-    echo -e "  ${GREEN}[4]${NC} 配置/查看节点"
-    echo -e "  ${GREEN}[5]${NC} 重新生成链接"
-    echo -e "  ${GREEN}[6]${NC} 开启/关闭保活"
-    echo -e "  ${GREEN}[7]${NC} 安装/更新 sing-box"
-    echo -e "  ${GREEN}[8]${NC} 卸载"
-    echo -e "  ${GREEN}[0]${NC} 退出"
+# ==================== 卸载 ====================
+delete_self() {
+    echo -e "${YELLOW}此操作将卸载 sing-box、删除所有配置和脚本，且无法恢复。${NC}"
+    read -p "确认完全卸载？(y/N): " CONFIRM_DELETE
+    if [[ ! "$CONFIRM_DELETE" =~ ^[Yy]$ ]]; then
+        print_info "已取消"; return 0
+    fi
+    
+    if command -v systemctl &>/dev/null; then
+        systemctl stop sing-box 2>/dev/null || true
+        systemctl disable sing-box 2>/dev/null || true
+        rm -f /etc/systemd/system/sing-box.service
+    elif command -v rc-service &>/dev/null; then
+        rc-service sing-box stop 2>/dev/null || true
+        rc-update del sing-box 2>/dev/null || true
+        rm -f /etc/init.d/sing-box
+    fi
+    
+    rm -f ${INSTALL_DIR}/sing-box /usr/local/bin/sb
+    rm -rf /etc/sing-box /var/log/sing-box /tmp/sb.tar.gz /tmp/sing-box-*
+    rm -f /etc/cron.d/sing-box-keepalive
+    
+    print_success "已完全卸载"; exit 0
 }
 
+# ==================== 快捷命令 ====================
+setup_sb_shortcut() {
+    print_info "创建快捷命令 sb..."
+    if [[ ! -f "${SCRIPT_PATH}" ]]; then
+        print_warning "当前脚本并非磁盘文件，跳过创建 sb"
+        return
+    fi
+    cat > /usr/local/bin/sb << EOSB
+#!/bin/bash
+bash "${SCRIPT_PATH}" "\$@"
+EOSB
+    chmod +x /usr/local/bin/sb
+    print_success "已创建快捷命令: sb"
+}
+
+# ==================== 主菜单 ====================
+show_main_menu() {
+    show_banner
+    echo -e "${CYAN}╔═══════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║          ${GREEN}Sing-Box 一键管理面板${CYAN}          ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "${YELLOW}当前出入站配置:${NC}"
+    if [[ -n "$SERVER_IP" ]]; then
+        echo -e "  IPv4 地址: ${GREEN}${SERVER_IP}${NC}"
+    fi
+    if [[ -n "$SERVER_IPV6" ]]; then
+        echo -e "  IPv6 地址: ${GREEN}${SERVER_IPV6}${NC}"
+    fi
+    echo -e "  入站模式: ${GREEN}${INBOUND_IP_MODE}${NC}     出站模式: ${GREEN}${OUTBOUND_IP_MODE}${NC}"
+    echo -e "  当前节点数: ${GREEN}${#INBOUND_TAGS[@]}${NC}"
+    # 显示保活状态
+    if [[ -f /etc/cron.d/sing-box-keepalive ]]; then
+        echo -e "  保活任务: ${GREEN}已开启${NC}"
+    else
+        echo -e "  保活任务: ${YELLOW}未开启${NC}"
+    fi
+    echo ""
+    echo -e "  ${GREEN}[1]${NC} 添加/继续添加节点"
+    echo -e "  ${GREEN}[2]${NC} 中转配置 (添加/配置/删除)"
+    echo -e "  ${GREEN}[3]${NC} 出入站配置 (IPv4/IPv6)"
+    echo -e "  ${GREEN}[4]${NC} 配置 / 查看节点"
+    echo -e "  ${GREEN}[5]${NC} 重新生成链接文件"
+    echo -e "  ${GREEN}[6]${NC} 开启/关闭保活"
+    echo -e "  ${GREEN}[7]${NC} 安装/更新 sing-box"
+    echo -e "  ${GREEN}[8]${NC} 完全卸载脚本"
+    echo -e "  ${GREEN}[0]${NC} 退出脚本"
+    echo ""
+}
+
+# ==================== 主循环 ====================
 main_menu() {
     while true; do
-        [[ -f "${CONFIG_FILE}" ]] && load_inbounds_from_config
+        if [[ -f "${CONFIG_FILE}" ]]; then
+            load_inbounds_from_config
+        fi
         load_relays_from_file
         load_ip_config
+        
         show_main_menu
         read -p "请选择 [0-8]: " m_choice
+        
         case $m_choice in
             1) show_menu ;;
             2) setup_relay ;;
             3) ip_config_menu ;;
             4) config_and_view_menu ;;
             5) regenerate_all_links ;;
-            6) setup_keepalive enable ;;
+            6) 
+                echo -e "  ${GREEN}[1]${NC} 开启保活  ${GREEN}[2]${NC} 关闭保活"
+                read -p "选择: " ka
+                case $ka in
+                    1) setup_keepalive enable ;;
+                    2) setup_keepalive disable ;;
+                esac
+                ;;
             7) install_or_update_singbox ;;
             8) delete_self ;;
-            0) exit 0 ;;
+            0) print_info "已退出"; exit 0 ;;
             *) print_error "无效选项" ;;
         esac
+        echo ""
         [[ "$m_choice" != "0" ]] && read -p "按回车返回主菜单..." _
     done
 }
-
-# ==================== 主函数 ====================
-main() {
-    [[ $EUID -ne 0 ]] && { print_error "需要 root 权限"; exit 1; }
-    detect_system
-    ensure_deps                              # 仅安装依赖，不自动装 sing-box
-    mkdir -p /etc/sing-box
-    if ! command -v sing-box &>/dev/null; then
-        print_warning "sing-box 未安装，请从主菜单选择 [7] 先安装"
-    else
-        gen_keys
-    fi
-    load_ip_config
-    [[ -z "${SERVER_IP}" ]] && get_ip
-    setup_sb_shortcut
-    setup_keepalive enable
-    [[ -f "${CONFIG_FILE}" ]] && load_inbounds_from_config
-    load_relays_from_file
-    load_links_from_files
-    [[ -f "${CONFIG_FILE}" && -z "$ALL_LINKS_TEXT" ]] && regenerate_links_from_config
-    main_menu
-}
-
-main
