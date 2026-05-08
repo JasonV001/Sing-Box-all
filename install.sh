@@ -1017,19 +1017,6 @@ setup_reality() {
     read -p "SNI域名 [${DEFAULT_SNI}]: " SNI
     SNI=${SNI:-${DEFAULT_SNI}}
     
-    # --- 增加 ECH 选项 ---
-    read -p "是否启用 ECH (Encrypted Client Hello)？ (y/N): " ENABLE_ECH
-    ENABLE_ECH=${ENABLE_ECH:-N}
-    local ech_config=""
-    if [[ "$ENABLE_ECH" =~ ^[Yy]$ ]]; then
-        # ECH 作为 tls 的直接子项，不与 reality 嵌套
-        ech_config=",
-    \"ech\": {
-      \"enabled\": true
-    }"
-        print_info "已启用 ECH（需要客户端支持）"
-    fi
-    
     print_info "生成配置文件..."
     
     local inbound="{
@@ -1046,7 +1033,7 @@ setup_reality() {
       \"handshake\": {\"server\": \"${SNI}\", \"server_port\": 443},
       \"private_key\": \"${REALITY_PRIVATE}\",
       \"short_id\": [\"${SHORT_ID}\"]
-    }${ech_config}
+    }
   }
 }"
     
