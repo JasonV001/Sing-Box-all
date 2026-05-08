@@ -1129,14 +1129,13 @@ setup_hysteria2() {
     }"
     fi
     
-    # 构建端口跳跃配置
+    # 构建端口跳跃配置（修复：去掉 listen_port_range，只保留 port_range）
     local port_range_config=""
     local listen_port=$PORT
     if [[ "$ENABLE_PORT_JUMP" =~ ^[Yy]$ ]]; then
         listen_port=$PORT_START
         local range_num=$((PORT_END - PORT_START + 1))
         port_range_config=",
-    \"listen_port_range\": true,
     \"port_range\": ${range_num}"
     fi
     
