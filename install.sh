@@ -1395,7 +1395,7 @@ setup_https() {
     save_links_to_files
 }
 
-# ==================== AnyTLS 配置（已启用随机填充混淆 + UDP 提示） ====================
+# ==================== AnyTLS 配置（已修复 padding_scheme 格式 + UDP 提示） ====================
 setup_anytls() {
     echo ""
     read_port_with_check 443
@@ -1405,13 +1405,24 @@ setup_anytls() {
     read -p "SNI域名 [${DEFAULT_SNI}]: " ANYTLS_SNI
     ANYTLS_SNI=${ANYTLS_SNI:-${DEFAULT_SNI}}
     
-    # 是否启用随机填充混淆（推荐启用）
+    # 是否启用填充混淆（使用官方默认的随机填充策略）
     read -p "是否启用随机填充混淆 (推荐)？[Y/n]: " ENABLE_PADDING
     ENABLE_PADDING=${ENABLE_PADDING:-Y}
     local padding_config=""
     if [[ "$ENABLE_PADDING" =~ ^[Yy]$ ]]; then
-        padding_config="[\"random\"]"
-        print_info "已启用随机填充混淆"
+        # 使用 sing-box 官方默认的 padding scheme 行数组格式
+        padding_config="[
+    \"stop=8\",
+    \"0=30-30\",
+    \"1=100-400\",
+    \"2=400-500,c,500-1000,c,500-1000,c,500-1000,c,500-1000\",
+    \"3=9-9,500-1000\",
+    \"4=500-1000\",
+    \"5=500-1000\",
+    \"6=500-1000\",
+    \"7=500-1000\"
+  ]"
+        print_info "已启用随机填充混淆（官方默认策略）"
     else
         padding_config="[]"
         print_info "未启用填充混淆（可能会被深度包检测识别）"
@@ -1446,7 +1457,7 @@ setup_anytls() {
     fi
     
     PROTO="AnyTLS"
-    EXTRA_INFO="密码: ${ANYTLS_PASSWORD}\n自签证书: ${ANYTLS_SNI}\nSNI: ${ANYTLS_SNI}\n填充混淆: $([ "$ENABLE_PADDING" =~ ^[Yy]$ ] && echo "已启用 (随机)" || echo "未启用")"
+    EXTRA_INFO="密码: ${ANYTLS_PASSWORD}\n自签证书: ${ANYTLS_SNI}\nSNI: ${ANYTLS_SNI}\n填充混淆: $([ "$ENABLE_PADDING" =~ ^[Yy]$ ] && echo "已启用 (官方默认)" || echo "未启用")"
     EXTRA_INFO="${EXTRA_INFO}\n\n${GREEN}UDP 支持:${NC} AnyTLS 原生支持 UDP-over-TCP，请在客户端开启 UDP 转发即可使用。"
     
     local line="[AnyTLS] ${SERVER_IP}:${PORT} (SNI: ${ANYTLS_SNI})\n${LINK}\n----------------------------------------\n\n"
