@@ -1,201 +1,201 @@
 #!/bin/bash
 #===============================================================================
-# 脚本: setup_swap.sh
-# 用途: 在 KVM/Xen/VMware 等全虚拟化 VPS 上交互式创建 Swap 文件
-# 要求: root 权限
+# swap.sh
+# 自动判断、交互式创建 Swap，支持卸载恢复原样
+# 用法: sudo ./swap.sh          (创建)
+#       sudo ./swap.sh remove   (卸载，仅移除脚本创建的 Swap)
 #===============================================================================
 
 set -euo pipefail
 
-# ------------------------------ 颜色定义 ------------------------------
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+# 颜色
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
+
+# 记录文件，用于卸载时识别哪些文件是本脚本创建的
+RECORD_FILE="/etc/swap_script_files"
 
 # ------------------------------ 函数定义 ------------------------------
+die() { echo -e "${RED}[错误]${NC} $1" >&2; exit 1; }
+info() { echo -e "${GREEN}[信息]${NC} $1"; }
+warn() { echo -e "${YELLOW}[警告]${NC} $1"; }
 
-# 输出错误信息并退出
-die() {
-    echo -e "${RED}[错误]${NC} $1" >&2
-    exit 1
-}
-
-# 输出提示
-info() {
-    echo -e "${GREEN}[信息]${NC} $1"
-}
-
-warn() {
-    echo -e "${YELLOW}[警告]${NC} $1"
-}
-
-# 检测虚拟化环境是否支持 Swap 文件
-check_virt_support() {
-    # 优先使用 systemd-detect-virt
+# 虚拟化检测
+check_virt() {
     if command -v systemd-detect-virt &>/dev/null; then
         VIRT=$(systemd-detect-virt 2>/dev/null || true)
         case "$VIRT" in
-            openvz|lxc|lxc-libvirt)
-                die "检测到容器虚拟化: $VIRT，无法自行创建 Swap 文件。"
-                ;;
+            openvz|lxc|lxc-libvirt) die "检测到容器 $VIRT，无法创建 Swap。" ;;
         esac
-        info "虚拟化类型: $VIRT (支持 Swap 文件)"
-        return
-    fi
-
-    # 备用检测：检查 /proc/1/cgroup
-    if grep -E 'lxc|openvz' /proc/1/cgroup &>/dev/null 2>&1; then
-        die "检测到容器环境 (OpenVZ/LXC)，不支持创建 Swap 文件。"
-    fi
-
-    # 再检查 /proc/1/environ 中的 container 变量
-    if grep -q 'container=' /proc/1/environ 2>/dev/null; then
-        die "检测到容器环境（未知类型），可能无法创建 Swap 文件。"
-    fi
-
-    info "虚拟化环境检测通过（非典型容器）。"
-}
-
-# 检查当前是否已有 Swap
-check_existing_swap() {
-    if swapon --show | grep -q 'swap'; then
-        warn "系统当前已启用 Swap："
-        swapon --show
-        echo -e "${YELLOW}继续操作将添加额外的 Swap 文件，是否继续？[y/N]${NC}"
-        read -r ans
-        if [[ ! "$ans" =~ ^[Yy]$ ]]; then
-            exit 0
-        fi
-    fi
-}
-
-# 获取推荐 Swap 大小 (MB)
-get_recommend_swap_mb() {
-    # 获取物理内存 (单位 MB)
-    local mem_total_kb=$(grep MemTotal /proc/meminfo | awk '{print $2}')
-    local mem_mb=$((mem_total_kb / 1024))
-
-    # 推荐逻辑：物理内存 ≤ 1024MB -> 推荐等于物理内存
-    #           物理内存 ≤ 2048MB -> 推荐 1.5 倍物理内存
-    #           物理内存 ≤ 4096MB -> 推荐等于物理内存
-    #           更大 -> 推荐 4096MB
-    if [ "$mem_mb" -le 1024 ]; then
-        echo "$mem_mb"
-    elif [ "$mem_mb" -le 2048 ]; then
-        echo $((mem_mb * 3 / 2))   # 1.5 倍
-    elif [ "$mem_mb" -le 4096 ]; then
-        echo "$mem_mb"
+        info "虚拟化类型: $VIRT ✔"
     else
-        echo 4096
+        (grep -qE 'lxc|openvz' /proc/1/cgroup 2>/dev/null ||
+         grep -q 'container=' /proc/1/environ 2>/dev/null) &&
+            die "容器环境，无法创建 Swap。"
+        info "虚拟化环境通过。"
     fi
 }
 
-# 确认磁盘空间（根分区 / 的可用空间，单位 MB）
-check_disk_space() {
-    local required_mb=$1
-    local available_mb=$(df -m / | awk 'NR==2 {print $4}')
-    if [ "$available_mb" -lt "$required_mb" ]; then
-        die "磁盘空间不足！需要 ${required_mb}MB，/ 分区仅剩 ${available_mb}MB。"
+# 计算推荐 Swap (MB)
+get_recommend_mb() {
+    local mem_kb=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+    local mem_mb=$((mem_kb / 1024))
+    if   [ "$mem_mb" -le 1024 ]; then echo "$mem_mb"
+    elif [ "$mem_mb" -le 2048 ]; then echo $((mem_mb * 3 / 2))
+    elif [ "$mem_mb" -le 4096 ]; then echo "$mem_mb"
+    else echo 4096
     fi
-    info "/ 分区可用空间: ${available_mb}MB，满足要求。"
 }
 
-# 设置 swappiness
-set_swappiness() {
-    echo "-------------------------------------"
-    echo "建议将 vm.swappiness 设置为 10（较少使用 Swap，保护 SSD）"
-    echo "输入 0-100 之间的值，直接回车则设为 10，输入 n 跳过："
-    read -r swp_val
-    if [ "$swp_val" = "n" ] || [ "$swp_val" = "N" ]; then
+# 寻找可用文件名 (不覆盖)
+find_free_swapfile() {
+    local base="/swapfile"
+    local path="$base"
+    local count=1
+    while [ -e "$path" ] || swapon --show | grep -q "^$path "; do
+        path="${base}${count}"
+        count=$((count + 1))
+        [ $count -gt 100 ] && die "找不到可用文件名，请手动清理。"
+    done
+    echo "$path"
+}
+
+# 写入 fstab 防止重复
+add_to_fstab() {
+    local file="$1"
+    if ! grep -q "^$file " /etc/fstab; then
+        echo "$file none swap sw 0 0" >> /etc/fstab
+        info "已添加 $file 到 /etc/fstab"
+    else
+        warn "$file 在 fstab 中已存在，跳过添加。"
+    fi
+}
+
+# 调整 swappiness（交互）
+ask_swappiness() {
+    echo ""
+    echo "建议设置 vm.swappiness = 10，减少 Swap 滥用。"
+    echo "直接回车使用 10，输入 0-100 自定义，输入 n 跳过："
+    read -r val
+    val="${val:-10}"
+    if [ "$val" = "n" ] || [ "$val" = "N" ]; then
         info "跳过 swappiness 设置。"
         return
     fi
-    swp_val=${swp_val:-10}
-    if ! [[ "$swp_val" =~ ^[0-9]+$ ]] || [ "$swp_val" -gt 100 ]; then
-        warn "输入无效，跳过。"
+    if ! [[ "$val" =~ ^[0-9]+$ ]] || [ "$val" -gt 100 ]; then
+        warn "无效输入，跳过。"
         return
     fi
-
-    sysctl vm.swappiness="$swp_val" 2>/dev/null || warn "临时设置 swappiness 失败"
+    sysctl vm.swappiness="$val" 2>/dev/null || warn "临时设置失败"
     if grep -q "^vm.swappiness" /etc/sysctl.conf 2>/dev/null; then
-        sed -i "s/^vm.swappiness.*/vm.swappiness = $swp_val/" /etc/sysctl.conf
+        sed -i "s/^vm.swappiness.*/vm.swappiness = $val/" /etc/sysctl.conf
     else
-        echo "vm.swappiness = $swp_val" >> /etc/sysctl.conf
+        echo "vm.swappiness = $val" >> /etc/sysctl.conf
     fi
-    info "swappiness 已永久设置为 $swp_val"
+    info "swappiness 永久设置为 $val"
 }
 
-# ------------------------------ 主流程 ------------------------------
+# ------------------------------ 卸载模块 ------------------------------
+remove_created_swaps() {
+    if [ ! -f "$RECORD_FILE" ]; then
+        info "未找到脚本创建的 Swap 记录，无需卸载。"
+        exit 0
+    fi
 
-# 1. 必须 root
-if [ "$(id -u)" -ne 0 ]; then
-    die "请使用 root 用户运行本脚本。"
+    echo -e "${YELLOW}将移除以下由本脚本创建的 Swap 文件：${NC}"
+    cat -n "$RECORD_FILE"
+    echo ""
+    echo -n "确认卸载并删除这些文件？[y/N] "
+    read -r ans
+    if [[ ! "$ans" =~ ^[Yy]$ ]]; then
+        info "已取消。"
+        exit 0
+    fi
+
+    while IFS= read -r file; do
+        if [ -e "$file" ]; then
+            swapoff "$file" 2>/dev/null || true
+            rm -f "$file" && info "已移除: $file"
+        else
+            warn "文件不存在，跳过: $file"
+        fi
+        # 从 fstab 中移除相应行（安全匹配）
+        sed -i "\|^$file |d" /etc/fstab 2>/dev/null || true
+    done < "$RECORD_FILE"
+
+    rm -f "$RECORD_FILE"
+    info "卸载完成，所有脚本创建的 Swap 已清理。"
+    exit 0
+}
+
+# ------------------------------ 主程序 ------------------------------
+# 入口判断
+if [ "${1:-}" = "remove" ] || [ "${1:-}" = "uninstall" ]; then
+    [ "$(id -u)" -ne 0 ] && die "卸载需要 root 权限。"
+    remove_created_swaps
 fi
 
+# 正常运行创建流程
+[ "$(id -u)" -ne 0 ] && die "请使用 root 运行。"
+check_virt
+
+# 显示当前状况
 echo "============================================="
-echo "   VPS 虚拟内存 (Swap) 创建脚本"
+echo "   当前内存 / Swap 状况"
 echo "============================================="
-
-# 2. 检测虚拟化支持
-check_virt_support
-
-# 3. 检查已有 Swap
-check_existing_swap
-
-# 4. 计算推荐值并交互输入
-RECOMMEND=$(get_recommend_swap_mb)
+free -h | grep -E 'Mem|Swap'
 echo ""
-echo "当前物理内存: $(free -h | awk '/Mem:/ {print $2}')"
-echo "推荐 Swap 大小: ${RECOMMEND}MB （回车直接使用推荐值）"
-echo -n "请输入要创建的 Swap 大小 (MB): "
-read -r SWAP_MB
-SWAP_MB=${SWAP_MB:-$RECOMMEND}
 
-# 输入校验
+# 已有 Swap 提醒，但不阻止
+if swapon --show | grep -q 'swap'; then
+    warn "系统已存在 Swap，新文件将追加。"
+fi
+
+# 推荐值
+RECOMMEND=$(get_recommend_mb)
+echo "物理内存大致为 $(free -h | awk '/Mem:/ {print $2}')"
+echo "推荐 Swap 大小: ${RECOMMEND} MB"
+echo -n "请输入要创建的 Swap 大小 (MB) [直接回车使用推荐值]: "
+read -r CUSTOM
+SWAP_MB="${CUSTOM:-$RECOMMEND}"
 if ! [[ "$SWAP_MB" =~ ^[0-9]+$ ]] || [ "$SWAP_MB" -le 0 ]; then
     die "输入无效，必须是正整数。"
 fi
 
-info "即将创建 ${SWAP_MB}MB 的 Swap 文件..."
+# 磁盘空间检查
+AVAIL_MB=$(df -m / | awk 'NR==2 {print $4}')
+[ "$AVAIL_MB" -lt "$SWAP_MB" ] && die "磁盘空间不足！需要 ${SWAP_MB}MB，/ 仅剩 ${AVAIL_MB}MB。"
 
-# 5. 检查磁盘空间
-check_disk_space "$SWAP_MB"
-
-# 6. 创建 Swap 文件
-SWAPFILE="/swapfile"
-if [ -f "$SWAPFILE" ]; then
-    warn "$SWAPFILE 已存在，将被覆盖。继续？[y/N]"
-    read -r ans
-    if [[ ! "$ans" =~ ^[Yy]$ ]]; then
-        exit 0
-    fi
-    swapoff "$SWAPFILE" 2>/dev/null || true
-    rm -f "$SWAPFILE"
+# 自动获取文件名
+SWAPFILE=$(find_free_swapfile)
+info "将使用文件: $SWAPFILE 创建 ${SWAP_MB}MB Swap"
+echo -n "确认继续？[Y/n] "
+read -r CONFIRM
+if [[ ! "$CONFIRM" =~ ^([Yy]|"")$ ]]; then
+    info "已取消。"
+    exit 0
 fi
 
-info "正在创建 ${SWAP_MB}MB 文件（可能需要几秒）..."
+# 创建
+info "正在创建 ..."
 dd if=/dev/zero of="$SWAPFILE" bs=1M count="$SWAP_MB" status=progress
 chmod 600 "$SWAPFILE"
 mkswap "$SWAPFILE"
 swapon "$SWAPFILE"
 
-info "Swap 已启用："
+# 记录到文件（用于卸载）
+echo "$SWAPFILE" >> "$RECORD_FILE"
+
+# fstab
+add_to_fstab "$SWAPFILE"
+
+# 结果
+info "Swap 创建成功。当前内存状况："
 free -h
 
-# 7. 写入 /etc/fstab（如果尚未写入）
-if ! grep -q "^$SWAPFILE " /etc/fstab 2>/dev/null; then
-    echo "$SWAPFILE none swap sw 0 0" >> /etc/fstab
-    info "已添加 $SWAPFILE 到 /etc/fstab，开机自动挂载。"
-else
-    warn "$SWAPFILE 已存在于 fstab 中，跳过添加。"
-fi
-
-# 8. 调整 swappiness（可选）
-set_swappiness
+# swappiness
+ask_swappiness
 
 echo ""
 echo "============================================="
-echo "   所有操作完成！当前内存与 Swap 情况："
-free -h
+echo "   全部完成！"
 echo "============================================="
