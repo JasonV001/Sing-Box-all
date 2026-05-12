@@ -13,3 +13,8 @@ curl -fsSL https://raw.githubusercontent.com/JasonV001/Sing-Box-all/refs/heads/m
 ```
 wget -O swap.sh https://raw.githubusercontent.com/JasonV001/Sing-Box-all/refs/heads/main/swap.sh && chmod +x swap.sh && sudo ./swap.sh
 ```
+
+## 卸载
+```
+sudo ./swap.sh remove
+```
