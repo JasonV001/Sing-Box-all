@@ -41,7 +41,7 @@ ANYTLS_LINKS=""
 
 # IP 配置
 SERVER_IPV6=""
-INBOUND_IP_MODE="ipv4"   # ipv4 或 ipv6，控制入站监听地址
+INBOUND_IP_MODE="dual"   # ipv4, ipv6 或 dual，控制入站监听地址（默认双栈）
 OUTBOUND_IP_MODE="dual"  # ipv4, ipv6 或 dual，控制出站连接（默认双栈）
 IP_CONFIG_FILE="/etc/sing-box/ip_config.conf"
 
@@ -75,6 +75,16 @@ DEFAULT_SNI="time.is"
 
 # Alpine 标记
 ALPINE=0
+
+# 临时文件清理
+TEMP_FILES=()
+cleanup_temp_files() {
+    for f in "${TEMP_FILES[@]}"; do
+        rm -rf "$f" 2>/dev/null
+    done
+}
+trap cleanup_temp_files EXIT INT TERM
+
 # ==================== 打印函数 ====================
 print_info() {
     echo -e "${BLUE}[INFO]${NC} $1"
@@ -269,12 +279,20 @@ install_singbox() {
 
     # ---------- 3. 下载、解压、安装二进制（如需要） ----------
     if [[ $need_download -eq 1 ]]; then
-        LATEST=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r '.tag_name' | sed 's/v//')
+        local retry=0
+        local max_retries=3
+        while [[ $retry -lt $max_retries ]]; do
+            LATEST=$(curl -s --connect-timeout 10 "https://api.github.com/repos/SagerNet/sing-box/releases/latest" | jq -r '.tag_name' | sed 's/v//')
+            [[ -n "$LATEST" ]] && break
+            ((retry++))
+            [[ $retry -lt $max_retries ]] && sleep 2
+        done
         [[ -z "$LATEST" ]] && LATEST="1.12.0"
         print_info "目标版本: ${LATEST}"
 
         # 清理可能残留的半成品
         rm -rf /tmp/sb.tar.gz /tmp/sing-box-${LATEST}-linux-${ARCH}
+        TEMP_FILES+=("/tmp/sb.tar.gz" "/tmp/sing-box-${LATEST}-linux-${ARCH}")
 
         print_info "下载 sing-box (${LATEST} linux-${ARCH}) ..."
         wget -q --show-progress -O /tmp/sb.tar.gz \
@@ -396,9 +414,22 @@ gen_cert_for_sni() {
 gen_keys() {
     print_info "生成密钥和 UUID..."
     
-    if [[ -f "${KEY_FILE}" ]]; then
+    if [[ -f "${KEY_FILE}" ]] && [[ -r "${KEY_FILE}" ]]; then
         print_info "从文件加载已保存的密钥..."
-        source "${KEY_FILE}"
+        while IFS='=' read -r key value; do
+            case "$key" in
+                UUID) UUID="$value" ;;
+                REALITY_PRIVATE) REALITY_PRIVATE="$value" ;;
+                REALITY_PUBLIC) REALITY_PUBLIC="$value" ;;
+                SHORT_ID) SHORT_ID="$value" ;;
+                HY2_PASSWORD) HY2_PASSWORD="$value" ;;
+                SS_PASSWORD) SS_PASSWORD="$value" ;;
+                SHADOWTLS_PASSWORD) SHADOWTLS_PASSWORD="$value" ;;
+                ANYTLS_PASSWORD) ANYTLS_PASSWORD="$value" ;;
+                SOCKS_USER) SOCKS_USER="$value" ;;
+                SOCKS_PASS) SOCKS_PASS="$value" ;;
+            esac
+        done < "${KEY_FILE}"
         print_success "密钥加载完成"
         return 0
     fi
@@ -411,20 +442,10 @@ gen_keys() {
     UUID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null)
     
     # --- 增加 Short ID 自定义 ---
-    echo -e "${YELLOW}是否自定义 Reality Short ID？ (留空则随机生成)${NC}"
-    read -p "Short ID (8位十六进制，如 12345678abcdef): " CUSTOM_SHORT_ID
-    if [[ -n "$CUSTOM_SHORT_ID" ]]; then
-        if [[ ${#CUSTOM_SHORT_ID} -eq 16 && "$CUSTOM_SHORT_ID" =~ ^[0-9a-fA-F]{16}$ ]]; then
-            SHORT_ID="$CUSTOM_SHORT_ID"
-            print_success "使用自定义 Short ID: ${SHORT_ID}"
-        else
-            print_warning "Short ID 格式不正确，已改为随机生成"
-            SHORT_ID=$(openssl rand -hex 8)
-        fi
-    else
-        SHORT_ID=$(openssl rand -hex 8)
-    fi
-    
+    SHORT_ID=$(openssl rand -hex 8)
+    print_info "Reality Short ID 已自动生成: ${SHORT_ID}"
+    print_info "如需修改 Short ID，可在添加节点时自定义"
+
     HY2_PASSWORD=$(openssl rand -hex 16)
     SS_PASSWORD=$(openssl rand -base64 16)
     SHADOWTLS_PASSWORD=$(openssl rand -hex 16)
@@ -823,6 +844,22 @@ EOFCLIENT
     print_success "链接重新生成完成"
     save_links_to_files
 }
+
+# ==================== 监听地址获取 ====================
+get_listen_address() {
+    case "${INBOUND_IP_MODE}" in
+        "ipv4")
+            echo "0.0.0.0"
+            ;;
+        "ipv6")
+            echo "::"
+            ;;
+        "dual"|*)
+            echo "::"
+            ;;
+    esac
+}
+
 # ==================== IP 配置管理 ====================
 save_ip_config() {
     mkdir -p "$(dirname "${IP_CONFIG_FILE}")"
@@ -836,8 +873,15 @@ EOF
 }
 
 load_ip_config() {
-    if [[ -f "${IP_CONFIG_FILE}" ]]; then
-        source "${IP_CONFIG_FILE}"
+    if [[ -f "${IP_CONFIG_FILE}" ]] && [[ -r "${IP_CONFIG_FILE}" ]]; then
+        while IFS='=' read -r key value; do
+            case "$key" in
+                SERVER_IP) SERVER_IP="$value" ;;
+                SERVER_IPV6) SERVER_IPV6="$value" ;;
+                INBOUND_IP_MODE) INBOUND_IP_MODE="$value" ;;
+                OUTBOUND_IP_MODE) OUTBOUND_IP_MODE="$value" ;;
+            esac
+        done < "${IP_CONFIG_FILE}"
     fi
 }
 
@@ -922,11 +966,20 @@ get_ip() {
     local old_ip="${SERVER_IP}"
     local old_ipv6="${SERVER_IPV6}"
     
-    # 获取 IPv4
-    local ipv4=$(curl -s4m5 ifconfig.me 2>/dev/null || curl -s4m5 api.ipify.org 2>/dev/null || curl -s4m5 ip.sb 2>/dev/null)
-    
-    # 获取 IPv6
-    local ipv6=$(curl -s6m5 ifconfig.me 2>/dev/null || curl -s6m5 api6.ipify.org 2>/dev/null || curl -s6m5 ip.sb 2>/dev/null)
+    local ipv4=""
+    local ipv6=""
+
+    for service in "ifconfig.me" "api.ipify.org" "ip.sb"; do
+        ipv4=$(curl -s4 --connect-timeout 5 "https://${service}" 2>/dev/null)
+        [[ -n "$ipv4" && "$ipv4" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && break
+        ipv4=""
+    done
+
+    for service in "ifconfig.me" "api6.ipify.org" "ip.sb"; do
+        ipv6=$(curl -s6 --connect-timeout 5 "https://${service}" 2>/dev/null)
+        [[ -n "$ipv6" && "$ipv6" =~ ^[0-9a-fA-F:]+$ ]] && break
+        ipv6=""
+    done
     
     # 显示检测到的 IP
     echo ""
@@ -977,13 +1030,22 @@ get_ip() {
 
 check_port_in_use() {
     local port="$1"
-    
+
     if command -v ss &>/dev/null; then
         ss -tuln | awk '{print $5}' | grep -E "[:.]${port}$" >/dev/null 2>&1 && return 0 || return 1
     elif command -v netstat &>/dev/null; then
         netstat -tuln | awk '{print $4}' | grep -E "[:.]${port}$" >/dev/null 2>&1 && return 0 || return 1
     else
         return 1
+    fi
+}
+
+get_port_process() {
+    local port="$1"
+    if command -v ss &>/dev/null; then
+        ss -tulnp 2>/dev/null | grep -E "[:.]${port}$" | awk '{print $NF}'
+    elif command -v netstat &>/dev/null; then
+        netstat -tulnp 2>/dev/null | grep -E "[:.]${port}$" | awk '{print $NF}'
     fi
 }
 
@@ -1000,7 +1062,9 @@ read_port_with_check() {
         fi
         
         if check_port_in_use "$PORT"; then
-            print_warning "端口 ${PORT} 已被占用，请重新输入"
+            local proc_info=$(get_port_process "$PORT")
+            print_warning "端口 ${PORT} 已被占用"
+            [[ -n "$proc_info" ]] && print_info "占用进程: ${proc_info}"
             continue
         fi
         
@@ -1019,10 +1083,11 @@ setup_reality() {
     
     print_info "生成配置文件..."
     
+    local listen_addr=$(get_listen_address)
     local inbound="{
   \"type\": \"vless\",
   \"tag\": \"vless-in-${PORT}\",
-  \"listen\": \"::\",
+  \"listen\": \"${listen_addr}\",
   \"listen_port\": ${PORT},
   \"users\": [{\"uuid\": \"${UUID}\", \"flow\": \"xtls-rprx-vision\"}],
   \"tls\": {
@@ -1098,10 +1163,11 @@ setup_hysteria2() {
     }"
     fi
     
+    local listen_addr=$(get_listen_address)
     local inbound="{
   \"type\": \"hysteria2\",
   \"tag\": \"hy2-in-${PORT}\",
-  \"listen\": \"::\",
+  \"listen\": \"${listen_addr}\",
   \"listen_port\": ${PORT},
   \"users\": [{\"password\": \"${HY2_PASSWORD}\"}],
   \"tls\": {
@@ -1154,11 +1220,13 @@ setup_socks5() {
     
     print_info "生成配置文件..."
     
+    local listen_addr=$(get_listen_address)
+    
     if [[ "$ENABLE_AUTH" =~ ^[Yy]$ ]]; then
         local inbound="{
   \"type\": \"socks\",
   \"tag\": \"socks-in-${PORT}\",
-  \"listen\": \"::\",
+  \"listen\": \"${listen_addr}\",
   \"listen_port\": ${PORT},
   \"users\": [{\"username\": \"${SOCKS_USER}\", \"password\": \"${SOCKS_PASS}\"}]
 }"
@@ -1168,7 +1236,7 @@ setup_socks5() {
         local inbound="{
   \"type\": \"socks\",
   \"tag\": \"socks-in-${PORT}\",
-  \"listen\": \"::\",
+  \"listen\": \"${listen_addr}\",
   \"listen_port\": ${PORT}
 }"
         LINK="socks5://${SERVER_IP}:${PORT}#SOCKS5-${SERVER_IP}"
@@ -1209,10 +1277,11 @@ setup_shadowtls() {
     print_info "生成配置文件..."
     print_warning "ShadowTLS 通过伪装真实域名的TLS握手工作"
     
+    local listen_addr=$(get_listen_address)
     local inbound="{
   \"type\": \"shadowtls\",
   \"tag\": \"shadowtls-in-${PORT}\",
-  \"listen\": \"::\",
+  \"listen\": \"${listen_addr}\",
   \"listen_port\": ${PORT},
   \"version\": 3,
   \"users\": [{\"password\": \"${SHADOWTLS_PASSWORD}\"}],
@@ -1357,10 +1426,11 @@ setup_https() {
     
     print_info "生成配置文件..."
     
+    local listen_addr=$(get_listen_address)
     local inbound="{
   \"type\": \"vless\",
   \"tag\": \"vless-tls-in-${PORT}\",
-  \"listen\": \"::\",
+  \"listen\": \"${listen_addr}\",
   \"listen_port\": ${PORT},
   \"users\": [{\"uuid\": \"${UUID}\"}],
   \"tls\": {
@@ -1435,10 +1505,11 @@ setup_anytls() {
     
     print_info "生成配置文件..."
     
+    local listen_addr=$(get_listen_address)
     local inbound="{
   \"type\": \"anytls\",
   \"tag\": \"anytls-in-${PORT}\",
-  \"listen\": \"::\",
+  \"listen\": \"${listen_addr}\",
   \"listen_port\": ${PORT},
   \"users\": [{\"password\": \"${ANYTLS_PASSWORD}\"}],
   \"padding_scheme\": ${padding_config},
@@ -2048,14 +2119,15 @@ ip_config_menu() {
         echo ""
         echo -e "  ${GREEN}[1]${NC} 设置入站为 IPv4"
         echo -e "  ${GREEN}[2]${NC} 设置入站为 IPv6"
-        echo -e "  ${GREEN}[3]${NC} 设置出站为 IPv4"
-        echo -e "  ${GREEN}[4]${NC} 设置出站为 IPv6"
-        echo -e "  ${GREEN}[5]${NC} 设置出站为双栈 (IPv4+IPv6)"
-        echo -e "  ${GREEN}[6]${NC} 手动修改 IPv4 地址"
-        echo -e "  ${GREEN}[7]${NC} 手动修改 IPv6 地址"
+        echo -e "  ${GREEN}[3]${NC} 设置入站为双栈 (IPv4+IPv6)"
+        echo -e "  ${GREEN}[4]${NC} 设置出站为 IPv4"
+        echo -e "  ${GREEN}[5]${NC} 设置出站为 IPv6"
+        echo -e "  ${GREEN}[6]${NC} 设置出站为双栈 (IPv4+IPv6)"
+        echo -e "  ${GREEN}[7]${NC} 手动修改 IPv4 地址"
+        echo -e "  ${GREEN}[8]${NC} 手动修改 IPv6 地址"
         echo -e "  ${GREEN}[0]${NC} 返回主菜单"
         echo ""
-        read -p "请选择 [0-7]: " ip_choice
+        read -p "请选择 [0-8]: " ip_choice
         
         case $ip_choice in
             1)
@@ -2074,7 +2146,7 @@ ip_config_menu() {
                     read -p "按回车继续..." _
                     continue
                 fi
-                [[ -z "$INBOUND_IP_MODE" ]] && INBOUND_IP_MODE="ipv6"
+                INBOUND_IP_MODE="ipv6"
                 save_ip_config
                 print_success "入站已设置为 IPv6"
                 echo -e "${YELLOW}提示: 需要重新生成配置才能生效${NC}"
@@ -2084,6 +2156,17 @@ ip_config_menu() {
                 fi
                 ;;
             3)
+                INBOUND_IP_MODE="dual"
+                save_ip_config
+                print_success "入站已设置为双栈 (IPv4+IPv6)"
+                echo -e "${YELLOW}提示: 双栈模式将同时监听 IPv4 和 IPv6${NC}"
+                echo -e "${YELLOW}提示: 需要重新生成配置才能生效${NC}"
+                read -p "是否立即重新生成配置? (y/N): " regen
+                if [[ "$regen" =~ ^[Yy]$ ]] && [[ -n "$INBOUNDS_JSON" ]]; then
+                    generate_config && start_svc
+                fi
+                ;;
+            4)
                 OUTBOUND_IP_MODE="ipv4"
                 save_ip_config
                 print_success "出站已设置为 IPv4"
@@ -2093,7 +2176,7 @@ ip_config_menu() {
                     generate_config && start_svc
                 fi
                 ;;
-            4)
+            5)
                 if [[ -z "$SERVER_IPV6" ]]; then
                     print_error "未检测到 IPv6 地址，请先手动设置"
                     read -p "按回车继续..." _
@@ -2108,8 +2191,8 @@ ip_config_menu() {
                     generate_config && start_svc
                 fi
                 ;;
-            5)
-                [[ -z "$OUTBOUND_IP_MODE" ]] && OUTBOUND_IP_MODE="dual"
+            6)
+                OUTBOUND_IP_MODE="dual"
                 save_ip_config
                 print_success "出站已设置为双栈 (IPv4+IPv6)"
                 echo -e "${YELLOW}提示: 双栈模式将同时使用 IPv4 和 IPv6，由系统自动选择${NC}"
@@ -2119,7 +2202,7 @@ ip_config_menu() {
                     generate_config && start_svc
                 fi
                 ;;
-            6)
+            7)
                 read -p "请输入 IPv4 地址: " new_ipv4
                 if [[ -n "$new_ipv4" ]]; then
                     SERVER_IP="$new_ipv4"
@@ -2128,7 +2211,7 @@ ip_config_menu() {
                     echo -e "${YELLOW}提示: 需要重新生成链接文件${NC}"
                 fi
                 ;;
-            7)
+            8)
                 read -p "请输入 IPv6 地址: " new_ipv6
                 if [[ -n "$new_ipv6" ]]; then
                     SERVER_IPV6="$new_ipv6"
@@ -2373,7 +2456,13 @@ EOFCONFIG
 # ==================== 配置生成 ====================
 generate_config() {
     print_info "生成最终配置文件..."
-    
+
+    if [[ -f "${CONFIG_FILE}" ]]; then
+        local backup_file="${CONFIG_FILE}.bak.$(date +%Y%m%d%H%M%S)"
+        cp "${CONFIG_FILE}" "${backup_file}" 2>/dev/null
+        print_info "已备份配置到: ${backup_file}"
+    fi
+
     if [[ -z "$INBOUNDS_JSON" ]]; then
         print_error "未找到任何入站节点，请先添加节点"
         return 1
@@ -2391,7 +2480,19 @@ generate_config() {
     done
     
     # 添加 direct outbound
-    local direct_outbound='{"type": "direct", "tag": "direct"}'
+    local domain_strategy=""
+    case "${OUTBOUND_IP_MODE}" in
+        "ipv4")
+            domain_strategy='"domain_strategy": "ipv4_only", '
+            ;;
+        "ipv6")
+            domain_strategy='"domain_strategy": "ipv6_only", '
+            ;;
+        "dual"|*)
+            domain_strategy='"domain_strategy": "prefer_ipv4", '
+            ;;
+    esac
+    local direct_outbound="{\"type\": \"direct\", \"tag\": \"direct\", ${domain_strategy}\"tcp_fast_open\": false}"
     outbounds_array+=("$direct_outbound")
     
     # 组合 outbounds
