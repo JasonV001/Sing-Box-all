@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #=============================================
 # Cloudflare WARP 一键脚本 (支持 Alpine + 分流)
-# Alpine 自动安装 glibc 以运行官方二进制
+# Alpine 优先尝试 edge/testing 原生 wgcf 包
 #=============================================
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -33,18 +33,23 @@ install_deps() {
     case $OS in
         alpine)
             apk update || { echo -e "${RED}apk update 失败${NC}"; exit 1; }
-            # 基础工具，不含 wgcf
             apk add wireguard-tools curl openresolv bind-tools || exit 1
-            # 添加 edge/testing 仓库供安装 glibc 使用（若后续需要）
-            if ! grep -q 'edge/testing' /etc/apk/repositories; then
-                echo -e "${YELLOW}[提示] 添加 edge/testing 仓库（用于安装 glibc）${NC}"
-                # 注意：不修改主仓库，仅临时添加 edge/testing
-                echo "http://dl-cdn.alpinelinux.org/alpine/edge/testing" >> /etc/apk/repositories
-                apk update || true
+
+            # 尝试从 edge/testing 直接安装 wgcf（musl 原生）
+            echo -e "${BLUE}尝试从 edge/testing 安装 wgcf 包...${NC}"
+            if apk add --allow-untrusted wgcf -X http://dl-cdn.alpinelinux.org/alpine/edge/testing 2>/dev/null; then
+                WGCF_BIN="/usr/bin/wgcf"
+                echo -e "${GREEN}成功安装原生 wgcf（无需 glibc）${NC}"
+            else
+                echo -e "${YELLOW}原生 wgcf 包不可用，将使用官方二进制 + glibc${NC}"
+                # 添加 edge/testing 仓库并更新（以防后续需要 glibc）
+                if ! grep -q 'edge/testing' /etc/apk/repositories; then
+                    echo "http://dl-cdn.alpinelinux.org/alpine/edge/testing" >> /etc/apk/repositories
+                    apk update || true
+                fi
+                apk add gcompat || exit 1
+                WGCF_BIN="/usr/local/bin/wgcf"
             fi
-            # 预装 gcompat（提供基本 glibc 兼容）
-            apk add gcompat || exit 1
-            WGCF_BIN="/usr/local/bin/wgcf"   # 我们将下载官方二进制
             ;;
         debian)
             apt update -qq && apt install -y -qq curl wireguard-tools resolvconf dnsutils || exit 1
@@ -72,28 +77,27 @@ test_wgcf() {
     return 1
 }
 
-# 为 Alpine 安装 glibc 以运行官方 wgcf 二进制
 install_glibc_if_needed() {
     if [ "$OS" != "alpine" ]; then return 0; fi
-    # 检查是否已经可以运行
     if test_wgcf "$WGCF_BIN"; then return 0; fi
     echo -e "${YELLOW}[信息] 正在安装 glibc 兼容库...${NC}"
-    apk add glibc 2>/dev/null || {
-        echo -e "${RED}无法安装 glibc 包，请确认 edge/testing 仓库已启用或手动安装。${NC}"
+    # 信任未签名的包
+    apk add --allow-untrusted glibc -X http://dl-cdn.alpinelinux.org/alpine/edge/testing 2>/dev/null || {
+        echo -e "${RED}无法安装 glibc 包，请尝试手动运行：${NC}"
+        echo -e "  apk add --allow-untrusted glibc -X http://dl-cdn.alpinelinux.org/alpine/edge/testing"
         return 1
     }
-    # 再次测试
     if test_wgcf "$WGCF_BIN"; then
         echo -e "${GREEN}glibc 安装成功，wgcf 可运行。${NC}"
         return 0
     else
-        echo -e "${RED}安装 glibc 后仍无法运行 wgcf，架构或版本可能不兼容。${NC}"
+        echo -e "${RED}安装 glibc 后仍无法运行 wgcf，架构或版本不兼容。${NC}"
         return 1
     fi
 }
 
 install_wgcf_binary() {
-    # 如果已有有效二进制，直接返回
+    # 如果已存在有效二进制，直接返回
     if [ -n "$WGCF_BIN" ] && [ -f "$WGCF_BIN" ] && test_wgcf "$WGCF_BIN"; then
         return 0
     fi
@@ -128,7 +132,6 @@ install_wgcf_binary() {
             if is_valid_elf "$tmp"; then
                 mv "$tmp" "$WGCF_BIN"
                 chmod +x "$WGCF_BIN"
-                # 尝试运行，失败则安装 glibc
                 if test_wgcf "$WGCF_BIN"; then
                     echo -e "${GREEN}成功安装 wgcf ${ver}${NC}"
                     return 0
@@ -137,13 +140,12 @@ install_wgcf_binary() {
                     if [ "$OS" = "alpine" ]; then
                         install_glibc_if_needed && return 0
                     fi
-                    # 如果非 Alpine 或安装 glibc 后仍失败，则报错
-                    echo -e "${RED}下载的文件无法运行，可能是动态库缺失。${NC}"
+                    echo -e "${RED}下载的文件无法运行，动态库缺失。${NC}"
                     exit 1
                 fi
             else
                 rm -f "$tmp"
-                echo -e "${YELLOW}版本 ${ver} 校验失败（非 ELF 文件），尝试下一个...${NC}"
+                echo -e "${YELLOW}版本 ${ver} 校验失败（非 ELF），尝试下一个...${NC}"
             fi
         else
             echo -e "${YELLOW}版本 ${ver} 下载失败，尝试下一个...${NC}"
@@ -328,7 +330,7 @@ show_menu() {
         1)
             check_root
             install_deps
-            install_wgcf_binary
+            [ "$WGCF_BIN" = "/usr/local/bin/wgcf" ] && install_wgcf_binary
             if [ ! -f /etc/wireguard/wgcf.conf ]; then
                 read -rp "使用 WARP+ 密钥？(y/n) " yn
                 [ "$yn" = "y" -o "$yn" = "Y" ] && read -rp "请输入密钥: " WARP_LICENSE
@@ -356,7 +358,7 @@ if [ $# -gt 0 ]; then
         keys)    check_root; show_keys ;;
         mode)    check_root; switch_mode ;;
         install) check_root; install_deps
-                 install_wgcf_binary
+                 [ "$WGCF_BIN" = "/usr/local/bin/wgcf" ] && install_wgcf_binary
                  generate_config; start_warp ;;
         *)       show_menu ;;
     esac
