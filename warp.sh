@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #=============================================
 # Cloudflare WARP 一键脚本 (支持 Alpine + 分流)
-# 修复：添加 cp 命令确保配置文件到位
+# 修复：容器/权限检测，确保 wgcf 可运行
 #=============================================
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -174,7 +174,7 @@ generate_config() {
     sed -i "s/1.1.1.1/1.1.1.1, 1.0.0.1/" wgcf-profile.conf
     sed -i "/\[Peer\]/a PersistentKeepalive = 25" wgcf-profile.conf
 
-    # 关键：复制配置文件
+    # 复制配置文件
     cp wgcf-profile.conf /etc/wireguard/wgcf.conf
 
     apply_mode "global"
@@ -269,6 +269,17 @@ show_keys() {
 
 start_warp() {
     echo -e "${BLUE}启动 WARP 接口 wgcf ...${NC}"
+    # 检测环境是否允许创建 WireGuard 接口
+    if ! ip link add dev wgcf-test type wireguard 2>/dev/null; then
+        echo -e "${RED}当前环境不支持创建 WireGuard 接口（可能是受限容器）${NC}"
+        echo -e "${YELLOW}常见解决方案：${NC}"
+        echo -e "  - 使用 KVM 虚拟化 VPS（非 OpenVZ/LXC）"
+        echo -e "  - Docker: 添加 --cap-add=NET_ADMIN --device=/dev/net/tun"
+        echo -e "  - 确保内核已加载 wireguard 模块（modprobe wireguard）"
+        return 1
+    fi
+    ip link delete dev wgcf-test 2>/dev/null
+
     wg-quick up wgcf || { echo -e "${RED}启动失败，请检查配置。${NC}"; return 1; }
     echo -e "${GREEN}已连接，当前出站 IP:${NC}"
     curl -s myip.ipip.net || echo -e "${YELLOW}查询 IP 失败，但接口可能已启动。${NC}"
