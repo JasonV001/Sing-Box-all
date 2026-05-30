@@ -18,3 +18,9 @@ wget -O swap.sh https://raw.githubusercontent.com/JasonV001/Sing-Box-all/refs/he
 ```
 sudo ./swap.sh remove
 ```
+
+## WARP安装
+```
+wget -O warp.sh https://raw.githubusercontent.com/JasonV001/Sing-Box-all/refs/heads/main/warp.sh && chmod +x warp.sh && sudo ./warp.sh
+```
+
