@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #=============================================
 # Cloudflare WARP 一键脚本 (支持 Alpine + 分流)
-# 修复：去掉 set -e，增加错误处理，不再闪退
+# 特性：自动注册密钥、保活、下载校验
 #=============================================
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -33,7 +33,7 @@ install_deps() {
     case $OS in
         alpine)
             apk update || { echo -e "${RED}apk update 失败${NC}"; exit 1; }
-            apk add wireguard-tools curl openresolv bind-tools || exit 1
+            apk add wireguard-tools curl openresolv bind-tools file || exit 1
             if apk search wgcf 2>/dev/null | grep -q "^wgcf"; then
                 apk add wgcf && WGCF_BIN="/usr/bin/wgcf"
             else
@@ -41,28 +41,48 @@ install_deps() {
             fi
             ;;
         debian)
-            apt update -qq && apt install -y -qq curl wireguard-tools resolvconf dnsutils || exit 1
+            apt update -qq && apt install -y -qq curl wireguard-tools resolvconf dnsutils file || exit 1
             WGCF_BIN="/usr/local/bin/wgcf"
             ;;
         centos)
-            yum install -y -q epel-release && yum install -y -q curl wireguard-tools bind-utils || exit 1
+            yum install -y -q epel-release && yum install -y -q curl wireguard-tools bind-utils file || exit 1
             WGCF_BIN="/usr/local/bin/wgcf"
             ;;
     esac
     mkdir -p "$WORKDIR"
 }
 
+# 检查文件是否为有效的 ELF 可执行文件
+is_valid_binary() {
+    local f="$1"
+    # 读取前4字节，ELF 魔数为 \x7fELF
+    local magic
+    magic=$(od -An -tx1 -N4 "$f" 2>/dev/null | tr -d ' ')
+    [ "$magic" = "7f454c46" ] && return 0 || return 1
+}
+
 install_wgcf_binary() {
-    if [ -n "$WGCF_BIN" ] && [ -f "$WGCF_BIN" ]; then return 0; fi
+    # 如果已存在有效二进制则跳过
+    if [ -n "$WGCF_BIN" ] && [ -f "$WGCF_BIN" ] && is_valid_binary "$WGCF_BIN"; then
+        return 0
+    fi
+
     echo -e "${BLUE}[信息] 下载 wgcf ...${NC}"
-    # 检查网络连通性
+    # 检查 GitHub 连通性
     if ! curl -s --connect-timeout 5 https://github.com >/dev/null; then
-        echo -e "${RED}无法连接 GitHub，请检查网络或手动安装 wgcf。${NC}"
+        echo -e "${RED}无法连接 GitHub，请检查网络或设置代理。${NC}"
         exit 1
     fi
+
+    # 获取最新版本号
     local latest
     latest=$(curl -s --connect-timeout 10 https://api.github.com/repos/ViRb3/wgcf/releases/latest | grep tag_name | cut -d\" -f4)
-    [ -z "$latest" ] && latest="v2.2.22"
+    if [ -z "$latest" ]; then
+        echo -e "${YELLOW}无法获取最新版本号，使用备用版本 v2.2.22${NC}"
+        latest="v2.2.22"
+    fi
+
+    # 确定架构
     local arch
     arch=$(uname -m)
     case $arch in
@@ -71,12 +91,31 @@ install_wgcf_binary() {
         armv7l)  arch="armv7" ;;
         *) echo -e "${RED}不支持的架构: $arch${NC}"; exit 1 ;;
     esac
-    echo -e "下载地址: https://github.com/ViRb3/wgcf/releases/download/${latest}/wgcf_${latest}_linux_${arch}"
-    curl -L --connect-timeout 15 -o "$WGCF_BIN" "https://github.com/ViRb3/wgcf/releases/download/${latest}/wgcf_${latest}_linux_${arch}" || {
-        echo -e "${RED}下载失败，请手动下载 wgcf 到 /usr/local/bin/wgcf${NC}"
+
+    local url="https://github.com/ViRb3/wgcf/releases/download/${latest}/wgcf_${latest}_linux_${arch}"
+    echo -e "下载地址: ${url}"
+
+    # 下载临时文件
+    local tmpfile="/tmp/wgcf_download_$$"
+    if curl -L --connect-timeout 15 -o "$tmpfile" "$url"; then
+        if is_valid_binary "$tmpfile"; then
+            mv "$tmpfile" "$WGCF_BIN"
+            chmod +x "$WGCF_BIN"
+            echo -e "${GREEN}wgcf 下载成功${NC}"
+        else
+            rm -f "$tmpfile"
+            echo -e "${RED}下载的文件无效（非可执行程序），可能是版本不存在或网络问题。${NC}"
+            echo -e "${YELLOW}请手动下载 wgcf 并放置到 ${WGCF_BIN}，然后重新运行脚本。${NC}"
+            echo -e "手动下载命令示例："
+            echo -e "  wget -O ${WGCF_BIN} ${url}"
+            echo -e "  chmod +x ${WGCF_BIN}"
+            exit 1
+        fi
+    else
+        rm -f "$tmpfile"
+        echo -e "${RED}下载失败，请检查网络。${NC}"
         exit 1
-    }
-    chmod +x "$WGCF_BIN"
+    fi
 }
 
 generate_config() {
@@ -92,7 +131,11 @@ generate_config() {
         $WGCF_BIN update --license "$WARP_LICENSE" || echo -e "${YELLOW}许可证激活失败，继续使用免费版${NC}"
     fi
 
-    $WGCF_BIN generate || { echo -e "${RED}生成配置文件失败${NC}"; exit 1; }
+    if ! $WGCF_BIN generate; then
+        echo -e "${RED}生成配置文件失败${NC}"
+        exit 1
+    fi
+
     [ ! -f wgcf-profile.conf ] && { echo -e "${RED}配置文件未找到${NC}"; exit 1; }
 
     sed -i "s/MTU.*/MTU = 1280/" wgcf-profile.conf
