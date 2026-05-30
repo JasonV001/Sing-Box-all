@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #=============================================
 # Cloudflare WARP 一键脚本 (支持 Alpine + 分流)
-# Alpine 优先尝试 edge/testing 原生 wgcf 包
+# 修复：添加 cp 命令确保配置文件到位
 #=============================================
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -34,15 +34,12 @@ install_deps() {
         alpine)
             apk update || { echo -e "${RED}apk update 失败${NC}"; exit 1; }
             apk add wireguard-tools curl openresolv bind-tools || exit 1
-
-            # 尝试从 edge/testing 直接安装 wgcf（musl 原生）
             echo -e "${BLUE}尝试从 edge/testing 安装 wgcf 包...${NC}"
             if apk add --allow-untrusted wgcf -X http://dl-cdn.alpinelinux.org/alpine/edge/testing 2>/dev/null; then
                 WGCF_BIN="/usr/bin/wgcf"
                 echo -e "${GREEN}成功安装原生 wgcf（无需 glibc）${NC}"
             else
                 echo -e "${YELLOW}原生 wgcf 包不可用，将使用官方二进制 + glibc${NC}"
-                # 添加 edge/testing 仓库并更新（以防后续需要 glibc）
                 if ! grep -q 'edge/testing' /etc/apk/repositories; then
                     echo "http://dl-cdn.alpinelinux.org/alpine/edge/testing" >> /etc/apk/repositories
                     apk update || true
@@ -81,7 +78,6 @@ install_glibc_if_needed() {
     if [ "$OS" != "alpine" ]; then return 0; fi
     if test_wgcf "$WGCF_BIN"; then return 0; fi
     echo -e "${YELLOW}[信息] 正在安装 glibc 兼容库...${NC}"
-    # 信任未签名的包
     apk add --allow-untrusted glibc -X http://dl-cdn.alpinelinux.org/alpine/edge/testing 2>/dev/null || {
         echo -e "${RED}无法安装 glibc 包，请尝试手动运行：${NC}"
         echo -e "  apk add --allow-untrusted glibc -X http://dl-cdn.alpinelinux.org/alpine/edge/testing"
@@ -97,7 +93,6 @@ install_glibc_if_needed() {
 }
 
 install_wgcf_binary() {
-    # 如果已存在有效二进制，直接返回
     if [ -n "$WGCF_BIN" ] && [ -f "$WGCF_BIN" ] && test_wgcf "$WGCF_BIN"; then
         return 0
     fi
@@ -136,7 +131,6 @@ install_wgcf_binary() {
                     echo -e "${GREEN}成功安装 wgcf ${ver}${NC}"
                     return 0
                 else
-                    # Alpine 需要 glibc
                     if [ "$OS" = "alpine" ]; then
                         install_glibc_if_needed && return 0
                     fi
@@ -179,6 +173,9 @@ generate_config() {
     sed -i "s/MTU.*/MTU = 1280/" wgcf-profile.conf
     sed -i "s/1.1.1.1/1.1.1.1, 1.0.0.1/" wgcf-profile.conf
     sed -i "/\[Peer\]/a PersistentKeepalive = 25" wgcf-profile.conf
+
+    # 关键：复制配置文件
+    cp wgcf-profile.conf /etc/wireguard/wgcf.conf
 
     apply_mode "global"
     echo -e "${GREEN}配置已保存到 /etc/wireguard/wgcf.conf (全局模式)${NC}"
