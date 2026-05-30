@@ -2,7 +2,7 @@
 set -e
 
 #=============================================
-# Cloudflare WARP 一键脚本 (支持 Alpine)
+# Cloudflare WARP 一键脚本 (支持 Alpine + 分流)
 # 自动注册设备、生成 WireGuard 密钥、开启保活
 # 兼容 Debian/Ubuntu/CentOS/Alpine
 #=============================================
@@ -12,6 +12,7 @@ BLUE='\033[0;34m'; NC='\033[0m'
 WORKDIR="/etc/wireguard"
 WGCF_BIN=""
 WARP_LICENSE=""
+CURRENT_MODE="global"  # global / media / custom
 
 check_root() {
     [ "$EUID" -ne 0 ] && echo -e "${RED}请使用 root 运行。${NC}" && exit 1
@@ -35,7 +36,7 @@ install_deps() {
     case $OS in
         alpine)
             apk update
-            apk add wireguard-tools curl openresolv
+            apk add wireguard-tools curl openresolv bind-tools
             if apk search wgcf 2>/dev/null | grep -q "^wgcf"; then
                 apk add wgcf
                 WGCF_BIN="/usr/bin/wgcf"
@@ -45,11 +46,11 @@ install_deps() {
             fi
             ;;
         debian)
-            apt update -qq && apt install -y -qq curl wireguard-tools resolvconf
+            apt update -qq && apt install -y -qq curl wireguard-tools resolvconf dnsutils
             WGCF_BIN="/usr/local/bin/wgcf"
             ;;
         centos)
-            yum install -y -q epel-release && yum install -y -q curl wireguard-tools
+            yum install -y -q epel-release && yum install -y -q curl wireguard-tools bind-utils
             WGCF_BIN="/usr/local/bin/wgcf"
             ;;
     esac
@@ -87,15 +88,115 @@ generate_config() {
     $WGCF_BIN generate
     [ ! -f wgcf-profile.conf ] && { echo -e "${RED}配置文件生成失败！${NC}"; exit 1; }
 
-    # 优化配置
+    # 基础优化
     sed -i "s/MTU.*/MTU = 1280/" wgcf-profile.conf
     sed -i "s/1.1.1.1/1.1.1.1, 1.0.0.1/" wgcf-profile.conf
-    # 添加保活（防 NAT 断连）
     sed -i "/\[Peer\]/a PersistentKeepalive = 25" wgcf-profile.conf
 
-    cp wgcf-profile.conf /etc/wireguard/wgcf.conf
-    echo -e "${GREEN}配置已保存到 /etc/wireguard/wgcf.conf${NC}"
+    # 默认全局模式
+    apply_mode "global"
+    echo -e "${GREEN}配置已保存到 /etc/wireguard/wgcf.conf (全局模式)${NC}"
     show_keys
+}
+
+# 设置分流模式
+apply_mode() {
+    local mode="$1"
+    local conf="/etc/wireguard/wgcf.conf"
+    local allowed_ips
+
+    case $mode in
+        global)
+            allowed_ips="0.0.0.0/0, ::/0"
+            ;;
+        media)
+            # 常见流媒体 IP 段（Netflix、Disney+、Hulu 等），可根据需要扩充
+            allowed_ips="$(cat <<'EOF'
+37.29.0.0/16, 37.85.0.0/16, 45.57.0.0/16,
+54.154.0.0/16, 63.84.0.0/16, 143.244.0.0/16,
+185.2.0.0/16, 188.34.0.0/16, 198.38.0.0/16,
+199.255.0.0/16, 64.145.64.0/24, 69.22.168.0/21,
+104.37.176.0/21, 108.175.32.0/20, 157.52.0.0/16,
+162.159.0.0/16, 173.245.0.0/16, 185.180.0.0/22,
+188.114.96.0/20, 190.115.16.0/21, 192.133.77.0/24,
+198.44.160.0/19, 198.135.108.0/22, 199.36.220.0/22
+EOF
+)"
+            # 同时解析常见域名为 IP（需 dig 支持）
+            for domain in netflix.com disneyplus.com hulu.com; do
+                local ips=$(dig +short "$domain" A 2>/dev/null)
+                if [ -n "$ips" ]; then
+                    while IFS= read -r ip; do
+                        allowed_ips+=", ${ip}/32"
+                    done <<< "$ips"
+                fi
+            done
+            allowed_ips=$(echo "$allowed_ips" | tr -d '\n' | sed 's/,$//')
+            ;;
+        custom)
+            read -rp "输入要使用 WARP 的 IP 段或域名(用逗号分隔, 如 1.1.1.1,netflix.com): " raw_input
+            IFS=',' read -ra items <<< "$raw_input"
+            allowed_ips=""
+            for item in "${items[@]}"; do
+                item=$(echo "$item" | xargs)  # 去空格
+                [ -z "$item" ] && continue
+                if [[ $item =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+                    # 若是 IP 地址，自动加 /32
+                    [[ ! $item =~ / ]] && item="${item}/32"
+                    allowed_ips+="${item}, "
+                else
+                    # 假设是域名，解析
+                    local ips=$(dig +short "$item" A 2>/dev/null)
+                    if [ -z "$ips" ]; then
+                        echo -e "${YELLOW}无法解析 $item，跳过${NC}"
+                    else
+                        while IFS= read -r ip; do
+                            allowed_ips+="${ip}/32, "
+                        done <<< "$ips"
+                    fi
+                fi
+            done
+            allowed_ips=$(echo "$allowed_ips" | sed 's/, $//')
+            if [ -z "$allowed_ips" ]; then
+                echo -e "${RED}没有有效的 IP 段，切换回全局模式${NC}"
+                apply_mode "global"
+                return
+            fi
+            ;;
+        *)
+            echo -e "${RED}未知模式: $mode${NC}"; return 1
+            ;;
+    esac
+
+    # 写入配置
+    if grep -q "AllowedIPs" "$conf"; then
+        sed -i "s|AllowedIPs.*|AllowedIPs = ${allowed_ips}|" "$conf"
+    else
+        sed -i "/\[Peer\]/a AllowedIPs = ${allowed_ips}" "$conf"
+    fi
+    CURRENT_MODE="$mode"
+}
+
+# 切换分流模式
+switch_mode() {
+    echo -e "${GREEN}当前模式: ${YELLOW}${CURRENT_MODE}${NC}"
+    echo -e "可选模式:"
+    echo -e "1) 全局模式 (所有流量走 WARP)"
+    echo -e "2) 流媒体模式 (仅流媒体走 WARP)"
+    echo -e "3) 自定义模式 (手动指定 IP/域名)"
+    read -rp "请选择 [1-3]: " mode_choice
+    case $mode_choice in
+        1) apply_mode "global" ;;
+        2) apply_mode "media" ;;
+        3) apply_mode "custom" ;;
+        *) echo -e "${RED}无效选择${NC}"; return 1 ;;
+    esac
+    echo -e "${GREEN}配置已更新，重启 WARP 后生效${NC}"
+    read -rp "是否立即重启 WARP？(y/n) " yn
+    if [ "$yn" = "y" -o "$yn" = "Y" ]; then
+        stop_warp
+        start_warp
+    fi
 }
 
 show_keys() {
@@ -146,9 +247,10 @@ show_menu() {
     echo -e "3) 重启连接"
     echo -e "4) 查看状态"
     echo -e "5) 查看密钥 (证书/密匙)"
-    echo -e "6) 完全卸载"
+    echo -e "6) 切换分流模式"
+    echo -e "7) 完全卸载"
     echo -e "0) 退出"
-    read -rp "请选择 [0-6]: " choice
+    read -rp "请选择 [0-7]: " choice
     case $choice in
         1)
             check_root; install_deps
@@ -164,7 +266,8 @@ show_menu() {
         3) check_root; stop_warp; start_warp ;;
         4) check_root; status_warp ;;
         5) check_root; show_keys ;;
-        6) check_root; uninstall_warp ;;
+        6) check_root; switch_mode ;;
+        7) check_root; uninstall_warp ;;
         0) exit 0 ;;
         *) echo -e "${RED}无效选项${NC}" ;;
     esac
@@ -178,6 +281,7 @@ if [ $# -gt 0 ]; then
         restart) check_root; stop_warp; start_warp ;;
         status)  check_root; status_warp ;;
         keys)    check_root; show_keys ;;
+        mode)    check_root; switch_mode ;;
         install) check_root; install_deps
                  [ "$WGCF_BIN" = "/usr/local/bin/wgcf" ] && install_wgcf_binary
                  generate_config; start_warp ;;
