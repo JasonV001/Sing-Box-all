@@ -2,7 +2,7 @@
 #=============================================
 # Cloudflare WARP 一键脚本 (支持 Alpine + 分流)
 # 特性：自动注册密钥、保活、智能下载 wgcf
-# 兼容：Alpine / Debian / CentOS
+# 修复：官方文件名不含 v 前缀
 #=============================================
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -35,7 +35,6 @@ install_deps() {
         alpine)
             apk update || { echo -e "${RED}apk update 失败${NC}"; exit 1; }
             apk add wireguard-tools curl openresolv bind-tools || exit 1
-            # 优先使用仓库自带的 wgcf
             if apk search wgcf 2>/dev/null | grep -q "^wgcf"; then
                 apk add wgcf && WGCF_BIN="/usr/bin/wgcf"
             else
@@ -54,7 +53,6 @@ install_deps() {
     mkdir -p "$WORKDIR"
 }
 
-# 检查文件是否为有效的 ELF 可执行文件
 is_valid_elf() {
     local f="$1"
     [ ! -f "$f" ] && return 1
@@ -63,29 +61,23 @@ is_valid_elf() {
     [ "$magic" = "7f454c46" ] && return 0 || return 1
 }
 
-# 测试 wgcf 是否能正常运行
 test_wgcf() {
     local f="$1"
     "$f" --version &>/dev/null && return 0
     return 1
 }
 
-# 智能下载 wgcf：从最新版本开始尝试，直到成功
 install_wgcf_binary() {
-    # 如果已有有效二进制，直接返回
     if [ -n "$WGCF_BIN" ] && [ -f "$WGCF_BIN" ] && test_wgcf "$WGCF_BIN"; then
         return 0
     fi
 
     echo -e "${BLUE}[信息] 自动获取 wgcf 可用版本...${NC}"
-
-    # 检查网络
     if ! curl -s --connect-timeout 5 https://github.com >/dev/null; then
         echo -e "${RED}无法连接 GitHub，请检查网络或设置代理。${NC}"
         exit 1
     fi
 
-    # 检测架构
     local arch
     arch=$(uname -m)
     case $arch in
@@ -95,20 +87,18 @@ install_wgcf_binary() {
         *) echo -e "${RED}不支持的架构: $arch${NC}"; exit 1 ;;
     esac
 
-    # 获取官方 releases 列表，取最新5个版本
     local versions
     versions=$(curl -s "https://api.github.com/repos/ViRb3/wgcf/releases?per_page=5" | grep '"tag_name"' | cut -d\" -f4)
     if [ -z "$versions" ]; then
-        echo -e "${RED}无法获取版本列表，请稍后重试。${NC}"
+        echo -e "${RED}无法获取版本列表。${NC}"
         exit 1
     fi
 
-    # 逐个尝试版本，直到下载并校验成功
     local tmp="/tmp/wgcf_$$"
     for ver in $versions; do
-        local url="https://github.com/ViRb3/wgcf/releases/download/${ver}/wgcf_${ver}_linux_${arch}"
+        # 关键修复：tag_name 是 v2.2.31，文件名是 wgcf_2.2.31_linux_arm64（去掉 v）
+        local url="https://github.com/ViRb3/wgcf/releases/download/${ver}/wgcf_${ver#v}_linux_${arch}"
         echo -e "尝试版本: ${ver}"
-        # -L 跟随重定向， -f 遇到 HTTP 错误码直接失败
         if curl -sLf "$url" -o "$tmp" 2>/dev/null; then
             if is_valid_elf "$tmp" && test_wgcf "$tmp"; then
                 mv "$tmp" "$WGCF_BIN"
@@ -167,7 +157,6 @@ apply_mode() {
             allowed_ips="0.0.0.0/0, ::/0"
             ;;
         media)
-            # 常见流媒体 IP 段（可根据需要扩充）
             allowed_ips="37.29.0.0/16, 37.85.0.0/16, 45.57.0.0/16,
 54.154.0.0/16, 63.84.0.0/16, 143.244.0.0/16,
 185.2.0.0/16, 188.34.0.0/16, 198.38.0.0/16,
@@ -176,7 +165,6 @@ apply_mode() {
 162.159.0.0/16, 173.245.0.0/16, 185.180.0.0/22,
 188.114.96.0/20, 190.115.16.0/21, 192.133.77.0/24,
 198.44.160.0/19, 198.135.108.0/22, 199.36.220.0/22"
-            # 解析常见域名
             for domain in netflix.com disneyplus.com hulu.com; do
                 local ips=$(dig +short "$domain" A 2>/dev/null)
                 if [ -n "$ips" ]; then
@@ -323,7 +311,6 @@ show_menu() {
     esac
 }
 
-# 命令行快捷调用
 if [ $# -gt 0 ]; then
     case $1 in
         start)   check_root; start_warp ;;
