@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 #=============================================
 # Cloudflare WARP 一键脚本 (支持 Alpine + 分流)
-# 特性：自动注册密钥、保活、智能下载 wgcf
-# 修复：官方文件名不含 v 前缀
+# Alpine 优先使用 apk 安装 wgcf，杜绝二进制兼容问题
 #=============================================
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -34,12 +33,16 @@ install_deps() {
     case $OS in
         alpine)
             apk update || { echo -e "${RED}apk update 失败${NC}"; exit 1; }
-            apk add wireguard-tools curl openresolv bind-tools || exit 1
-            if apk search wgcf 2>/dev/null | grep -q "^wgcf"; then
-                apk add wgcf && WGCF_BIN="/usr/bin/wgcf"
-            else
-                apk add gcompat && WGCF_BIN="/usr/local/bin/wgcf"
+            # 确保 community 仓库开启（含 wgcf 包）
+            if ! grep -q '^http.*community$' /etc/apk/repositories; then
+                echo -e "${YELLOW}[提示] 添加 Alpine community 仓库...${NC}"
+                # 添加对应版本的 community 仓库（如 v3.19）
+                local alpine_ver=$(cut -d. -f1,2 /etc/alpine-release 2>/dev/null || echo "v3.19")
+                echo "http://dl-cdn.alpinelinux.org/alpine/${alpine_ver}/community" >> /etc/apk/repositories
+                apk update || true
             fi
+            apk add wireguard-tools curl openresolv bind-tools wgcf || exit 1
+            WGCF_BIN="/usr/bin/wgcf"   # apk 安装的 wgcf 在这里
             ;;
         debian)
             apt update -qq && apt install -y -qq curl wireguard-tools resolvconf dnsutils || exit 1
@@ -68,13 +71,24 @@ test_wgcf() {
 }
 
 install_wgcf_binary() {
+    # Alpine 已经通过 apk 安装了 wgcf，直接跳过
+    if [ "$OS" = "alpine" ]; then
+        if [ -f "$WGCF_BIN" ] && test_wgcf "$WGCF_BIN"; then
+            return 0
+        else
+            echo -e "${RED}Alpine 的 wgcf 包安装失败，请手动处理。${NC}"
+            exit 1
+        fi
+    fi
+
+    # 非 Alpine 系统才需要下载
     if [ -n "$WGCF_BIN" ] && [ -f "$WGCF_BIN" ] && test_wgcf "$WGCF_BIN"; then
         return 0
     fi
 
     echo -e "${BLUE}[信息] 自动获取 wgcf 可用版本...${NC}"
     if ! curl -s --connect-timeout 5 https://github.com >/dev/null; then
-        echo -e "${RED}无法连接 GitHub，请检查网络或设置代理。${NC}"
+        echo -e "${RED}无法连接 GitHub，请检查网络。${NC}"
         exit 1
     fi
 
@@ -96,7 +110,6 @@ install_wgcf_binary() {
 
     local tmp="/tmp/wgcf_$$"
     for ver in $versions; do
-        # 关键修复：tag_name 是 v2.2.31，文件名是 wgcf_2.2.31_linux_arm64（去掉 v）
         local url="https://github.com/ViRb3/wgcf/releases/download/${ver}/wgcf_${ver#v}_linux_${arch}"
         echo -e "尝试版本: ${ver}"
         if curl -sLf "$url" -o "$tmp" 2>/dev/null; then
@@ -107,10 +120,10 @@ install_wgcf_binary() {
                 return 0
             else
                 rm -f "$tmp"
-                echo -e "${YELLOW}版本 ${ver} 下载后校验失败，尝试下一个...${NC}"
+                echo -e "${YELLOW}版本 ${ver} 校验失败，尝试下一个...${NC}"
             fi
         else
-            echo -e "${YELLOW}版本 ${ver} 下载失败（可能不存在该架构），尝试下一个...${NC}"
+            echo -e "${YELLOW}版本 ${ver} 下载失败，尝试下一个...${NC}"
         fi
     done
 
