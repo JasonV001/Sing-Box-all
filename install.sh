@@ -1244,15 +1244,30 @@ read_port_with_check() {
         break
     done
 }
-# ==================== Reality 配置 ====================
+# ==================== Reality 配置（加强版：uTLS指纹 + 安全SNI） ====================
 setup_reality() {
     echo ""
     read_port_with_check 443
     
-    echo -e "${YELLOW}请输入SNI域名（建议使用常见HTTPS网站域名）${NC}"
-    echo -e "${CYAN}例如: itunes.apple.com, www.bing.com, time.is${NC}"
+    echo -e "${YELLOW}请输入SNI域名（建议使用大流量网站，避免 time.is 等特殊域名）${NC}"
+    echo -e "${CYAN}推荐: www.microsoft.com, update.googleapis.com, dl.google.com, edge.microsoft.com${NC}"
     read -p "SNI域名 [${DEFAULT_SNI}]: " SNI
     SNI=${SNI:-${DEFAULT_SNI}}
+    
+    # 选择 TLS 指纹（uTLS 模拟）
+    echo -e "${YELLOW}选择 TLS 指纹 (强烈建议开启模拟，避免 Go 原生指纹被识别)${NC}"
+    echo -e "  ${GREEN}[1]${NC} chrome (默认，最常用)"
+    echo -e "  ${GREEN}[2]${NC} firefox"
+    echo -e "  ${GREEN}[3]${NC} safari"
+    echo -e "  ${GREEN}[4]${NC} random (每次握手随机，测试兼容性)"
+    read -p "请选择 [1-4] (默认1): " fp_choice
+    case $fp_choice in
+        2) FINGERPRINT="firefox" ;;
+        3) FINGERPRINT="safari" ;;
+        4) FINGERPRINT="random" ;;
+        *) FINGERPRINT="chrome" ;;
+    esac
+    print_info "已选择指纹: ${FINGERPRINT}"
     
     print_info "生成配置文件..."
     
@@ -1266,6 +1281,10 @@ setup_reality() {
   \"tls\": {
     \"enabled\": true,
     \"server_name\": \"${SNI}\",
+    \"utls\": {
+      \"enabled\": true,
+      \"fingerprint\": \"${FINGERPRINT}\"
+    },
     \"reality\": {
       \"enabled\": true,
       \"handshake\": {\"server\": \"${SNI}\", \"server_port\": 443},
@@ -1281,26 +1300,26 @@ setup_reality() {
         INBOUNDS_JSON="${INBOUNDS_JSON},${inbound}"
     fi
     
-    # 生成 Reality 链接 - 同时支持 IPv4 和 IPv6
+    # 生成 Reality 链接 - 同时支持 IPv4 和 IPv6，并加入指纹参数
     PROTO="Reality"
-    EXTRA_INFO="UUID: ${UUID}\nPublic Key: ${REALITY_PUBLIC}\nShort ID: ${SHORT_ID}\nSNI: ${SNI}"
+    EXTRA_INFO="UUID: ${UUID}\nPublic Key: ${REALITY_PUBLIC}\nShort ID: ${SHORT_ID}\nSNI: ${SNI}\nTLS指纹: ${FINGERPRINT}"
     
     # 保存新添加节点的链接（只用于显示）
     CURRENT_NEW_LINKS=""
     
-    # IPv4 链接
-    local link_ipv4="vless://${UUID}@${SERVER_IP}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI}&fp=chrome&pbk=${REALITY_PUBLIC}&sid=${SHORT_ID}&type=tcp#Reality-${SERVER_IP}"
+    # IPv4 链接（加入 fp 参数）
+    local link_ipv4="vless://${UUID}@${SERVER_IP}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI}&fp=${FINGERPRINT}&pbk=${REALITY_PUBLIC}&sid=${SHORT_ID}&type=tcp#Reality-${SERVER_IP}"
     add_link "$link_ipv4" "Reality" "$EXTRA_INFO" "${SERVER_IP}" "${PORT}" "${SNI}"
-    LINK="$link_ipv4"  # 默认链接
+    LINK="$link_ipv4"
     
     # 添加到新链接显示
-    CURRENT_NEW_LINKS="${CURRENT_NEW_LINKS}[Reality] ${SERVER_IP}:${PORT} (SNI: ${SNI})\n${link_ipv4}\n----------------------------------------\n\n"
+    CURRENT_NEW_LINKS="${CURRENT_NEW_LINKS}[Reality] ${SERVER_IP}:${PORT} (SNI: ${SNI}, 指纹: ${FINGERPRINT})\n${link_ipv4}\n----------------------------------------\n\n"
     
     # IPv6 链接（如果有）
     if [[ -n "${SERVER_IPV6}" ]]; then
-        local link_ipv6="vless://${UUID}@[${SERVER_IPV6}]:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI}&fp=chrome&pbk=${REALITY_PUBLIC}&sid=${SHORT_ID}&type=tcp#Reality-[${SERVER_IPV6}]"
+        local link_ipv6="vless://${UUID}@[${SERVER_IPV6}]:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI}&fp=${FINGERPRINT}&pbk=${REALITY_PUBLIC}&sid=${SHORT_ID}&type=tcp#Reality-[${SERVER_IPV6}]"
         add_link "$link_ipv6" "Reality" "$EXTRA_INFO" "[${SERVER_IPV6}]" "${PORT}" "${SNI}"
-        CURRENT_NEW_LINKS="${CURRENT_NEW_LINKS}[Reality] [${SERVER_IPV6}]:${PORT} (SNI: ${SNI})\n${link_ipv6}\n----------------------------------------\n\n"
+        CURRENT_NEW_LINKS="${CURRENT_NEW_LINKS}[Reality] [${SERVER_IPV6}]:${PORT} (SNI: ${SNI}, 指纹: ${FINGERPRINT})\n${link_ipv6}\n----------------------------------------\n\n"
     fi
     
     INBOUND_TAGS+=("vless-in-${PORT}")
@@ -1309,7 +1328,7 @@ setup_reality() {
     INBOUND_SNIS+=("${SNI}")
     INBOUND_RELAY_TAGS+=("direct")
     
-    print_success "Reality 配置完成 (SNI: ${SNI})"
+    print_success "Reality 配置完成 (SNI: ${SNI}, TLS指纹: ${FINGERPRINT})"
     save_links_to_files
 }
 
