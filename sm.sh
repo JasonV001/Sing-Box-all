@@ -1,91 +1,143 @@
-#!/usr/bin/env bash
-
-# ============================================================
-# 脚本名称: reality_scanner.sh
-# 功能描述: 一键扫描 REALITY 协议可用的伪装域名 (兼容 Debian / Alpine)
-# 用法: bash reality_scanner.sh
-# ============================================================
+#!/bin/sh
+# =====================================================
+# REALITY 域名扫描器 - 兼容 Debian / Alpine
+# 使用方法: sh scan.sh
+# =====================================================
 
 set -e
 
-# 检测 bash 路径，优先使用 /bin/bash 如果存在
-SHELL_PATH="/bin/bash"
-if [ ! -f "$SHELL_PATH" ]; then
-    SHELL_PATH=$(command -v bash)
-fi
-if [ -n "$SHELL_PATH" ]; then
-    exec "$SHELL_PATH" "$0" "$@"
-fi
-
-# 颜色输出
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
-
-# 默认参数
-THREADS=100
-TIMEOUT=5
-OUTPUT_FILE="reality_domains.csv"
-FILTERED_OUTPUT="filtered_domains.csv"
-TEMP_DIR="/tmp/RealiTLScanner"
-
-# 显示标题
-clear
-echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}     REALITY 域名扫描器 (Debian/Alpine 兼容版)${NC}"
-echo -e "${GREEN}========================================${NC}"
-echo ""
-
-# 询问运行环境
-echo -e "${BLUE}请选择运行环境:${NC}"
-echo "  1) 在 VPS 上运行 (自动检测本机公网 IP)"
-echo "  2) 在本地电脑上运行 (手动输入目标 VPS IP)"
-read -p "请输入选项 [1/2]: " RUN_ENV
-
-TARGET_IP=""
-if [ "$RUN_ENV" == "1" ]; then
-    echo -e "${GREEN}正在自动检测本机公网 IP...${NC}"
-    TARGET_IP=$(curl -s -4 ifconfig.me 2>/dev/null || curl -s -4 ipinfo.io/ip 2>/dev/null)
-    if [ -z "$TARGET_IP" ]; then
-        echo -e "${RED}错误: 无法自动获取本机 IP，请检查网络。${NC}"
-        exit 1
-    fi
-    echo -e "检测到 VPS IP: ${YELLOW}$TARGET_IP${NC}"
-elif [ "$RUN_ENV" == "2" ]; then
-    read -p "请输入目标 VPS 的 IP 地址: " TARGET_IP
-    if [ -z "$TARGET_IP" ]; then
-        echo -e "${RED}错误: IP 不能为空。${NC}"
-        exit 1
-    fi
+# 颜色（简单判断终端是否支持）
+if [ -t 1 ]; then
+    RED=$(printf '\033[0;31m')
+    GREEN=$(printf '\033[0;32m')
+    YELLOW=$(printf '\033[1;33m')
+    NC=$(printf '\033[0m')
 else
-    echo -e "${RED}无效选项。${NC}"
+    RED=''; GREEN=''; YELLOW=''; NC=''
+fi
+
+echo "${GREEN}========================================${NC}"
+echo "${GREEN}     REALITY 域名扫描器${NC}"
+echo "${GREEN}========================================${NC}"
+
+# 1. 获取目标 IP
+echo "请选择运行模式："
+echo "  1) 自动检测本机公网 IP"
+echo "  2) 手动输入目标 IP"
+printf "请输入 [1/2]: "
+read mode
+
+if [ "$mode" = "1" ]; then
+    echo "正在自动检测本机公网 IP..."
+    TARGET_IP=$(curl -s -4 ifconfig.me 2>/dev/null || curl -s -4 ipinfo.io/ip)
+    if [ -z "$TARGET_IP" ]; then
+        echo "${RED}错误：无法自动获取 IP，请检查网络${NC}"
+        exit 1
+    fi
+    echo "检测到 IP: ${YELLOW}$TARGET_IP${NC}"
+else
+    printf "请输入目标 VPS IP 地址: "
+    read TARGET_IP
+    if [ -z "$TARGET_IP" ]; then
+        echo "${RED}IP 不能为空${NC}"
+        exit 1
+    fi
+fi
+
+# 2. 安装依赖（curl, unzip, wget）
+if command -v apk >/dev/null 2>&1; then
+    echo "检测到 Alpine Linux，安装依赖..."
+    apk update
+    apk add --no-cache curl unzip wget
+elif command -v apt >/dev/null 2>&1; then
+    echo "检测到 Debian/Ubuntu，安装依赖..."
+    apt update -y
+    apt install -y curl unzip wget
+else
+    echo "${YELLOW}警告：未检测到 apk 或 apt，请确保已安装 curl, unzip, wget${NC}"
+fi
+
+# 3. 创建工作目录
+WORKDIR="/tmp/reality_scan_$$"
+mkdir -p "$WORKDIR"
+cd "$WORKDIR"
+echo "工作目录: $WORKDIR"
+
+# 4. 确定系统架构
+ARCH=$(uname -m)
+case "$ARCH" in
+    aarch64|arm64)
+        FILE_ARCH="arm64"
+        ;;
+    x86_64|amd64)
+        FILE_ARCH="amd64"
+        ;;
+    *)
+        echo "${YELLOW}未知架构 $ARCH，尝试使用 amd64${NC}"
+        FILE_ARCH="amd64"
+        ;;
+esac
+echo "系统架构: $FILE_ARCH"
+
+# 5. 下载 RealiTLScanner (使用稳定版 v0.2.1，支持 arm64)
+URL="https://github.com/XTLS/RealiTLScanner/releases/download/v0.2.1/RealiTLScanner_v0.2.1_linux_${FILE_ARCH}.zip"
+echo "下载地址: $URL"
+
+for i in 1 2 3; do
+    if wget -O scanner.zip "$URL" 2>/dev/null; then
+        echo "下载成功"
+        break
+    else
+        echo "下载失败，重试 $i/3"
+        sleep 2
+    fi
+done
+
+if [ ! -f scanner.zip ]; then
+    echo "${RED}下载失败，请手动下载 $URL 并解压到 $WORKDIR${NC}"
     exit 1
 fi
 
-echo ""
-echo -e "目标 VPS: ${YELLOW}$TARGET_IP${NC}"
-echo ""
+# 6. 解压
+unzip -o scanner.zip >/dev/null 2>&1
+chmod +x RealiTLScanner
+if [ ! -x ./RealiTLScanner ]; then
+    echo "${RED}解压或设置权限失败${NC}"
+    exit 1
+fi
 
-# 检测包管理器并安装依赖
-install_deps() {
-    if command -v apt &> /dev/null; then
-        echo -e "${GREEN}检测到 Debian/Ubuntu 系统，正在安装依赖...${NC}"
-        apt update -y
-        apt install -y curl unzip wget git build-essential
-    elif command -v apk &> /dev/null; then
-        echo -e "${GREEN}检测到 Alpine 系统，正在安装依赖...${NC}"
-        apk add --no-cache curl unzip wget git build-base go
-        # 设置 Go 环境变量
-        export PATH=$PATH:/usr/lib/go/bin
-        export GOPATH=/root/go
-        export GOBIN=/usr/local/bin
+# 7. 扫描
+echo "${GREEN}开始扫描目标 $TARGET_IP ...${NC}"
+./RealiTLScanner -addr "$TARGET_IP" -port 443 -thread 100 -timeout 5 -out result.csv
+
+# 8. 输出结果
+if [ -f result.csv ]; then
+    LINE_COUNT=$(wc -l < result.csv)
+    if [ "$LINE_COUNT" -gt 1 ]; then
+        echo ""
+        echo "${GREEN}========================================${NC}"
+        echo "${GREEN}           扫描结果${NC}"
+        echo "${GREEN}========================================${NC}"
+        echo "共找到 $((LINE_COUNT - 1)) 个域名"
+        echo ""
+        # 显示前 20 行（首行是标题）
+        head -n 21 result.csv | while IFS= read -r line; do
+            echo "$line"
+        done
+        echo ""
+        echo "完整结果保存在: ${YELLOW}$WORKDIR/result.csv${NC}"
+        echo "你可以使用 cat 或 scp 查看完整文件。"
     else
-        echo -e "${RED}不支持的包管理器，请手动安装 curl, unzip, wget, git, build-essential/go${NC}"
-        exit 1
+        echo "${RED}未找到任何可用域名，请尝试其他 VPS IP 或调整参数。${NC}"
     fi
-}
+else
+    echo "${RED}扫描失败，未生成 result.csv${NC}"
+    exit 1
+fi
+
+echo "${GREEN}========================================${NC}"
+echo "${GREEN}  扫描完成${NC}"
+echo "${GREEN}========================================${NC}"}
 install_deps
 
 # 检测系统架构
