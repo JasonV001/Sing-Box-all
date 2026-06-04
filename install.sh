@@ -75,7 +75,7 @@ SOCKS_USER=""
 SOCKS_PASS=""
 
 # 默认SNI
-DEFAULT_SNI="update.googleapis.com"
+DEFAULT_SNI="www.oracle.com"
 
 # Alpine 标记
 ALPINE=0
