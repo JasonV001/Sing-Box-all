@@ -75,7 +75,7 @@ SOCKS_USER=""
 SOCKS_PASS=""
 
 # 默认SNI
-DEFAULT_SNI="time.is"
+DEFAULT_SNI="update.googleapis.com"
 
 # Alpine 标记
 ALPINE=0
@@ -1250,7 +1250,7 @@ setup_reality() {
     read_port_with_check 443
     
     echo -e "${YELLOW}请输入SNI域名（建议使用常见HTTPS网站域名）${NC}"
-    echo -e "${CYAN}例如: itunes.apple.com, www.bing.com, time.is${NC}"
+    echo -e "${CYAN}例如: itunes.apple.com, update.googleapis.com, dl.google.com${NC}"
     read -p "SNI域名 [${DEFAULT_SNI}]: " SNI
     SNI=${SNI:-${DEFAULT_SNI}}
     
@@ -1319,7 +1319,7 @@ setup_hysteria2() {
     read_port_with_check 443
     
     echo -e "${YELLOW}请输入SNI域名（建议使用常见HTTPS网站域名）${NC}"
-    echo -e "${CYAN}例如: itunes.apple.com, www.bing.com, time.is${NC}"
+    echo -e "${CYAN}例如: itunes.apple.com, update.googleapis.com, dl.google.com${NC}"
     read -p "SNI域名 [${DEFAULT_SNI}]: " HY2_SNI
     HY2_SNI=${HY2_SNI:-${DEFAULT_SNI}}
     
@@ -1496,7 +1496,7 @@ setup_shadowtls() {
     read_port_with_check 443
     
     echo -e "${YELLOW}请输入SNI域名（建议使用常见HTTPS网站域名）${NC}"
-    echo -e "${CYAN}例如: itunes.apple.com, www.bing.com, time.is${NC}"
+    echo -e "${CYAN}例如: itunes.apple.com, update.googleapis.com, dl.google.com${NC}"
     read -p "SNI域名 [${DEFAULT_SNI}]: " SHADOWTLS_SNI
     SHADOWTLS_SNI=${SHADOWTLS_SNI:-${DEFAULT_SNI}}
     
@@ -1740,7 +1740,7 @@ setup_https() {
     read_port_with_check 443
     
     echo -e "${YELLOW}请输入SNI域名（建议使用常见HTTPS网站域名）${NC}"
-    echo -e "${CYAN}例如: itunes.apple.com, www.bing.com, time.is${NC}"
+    echo -e "${CYAN}例如: itunes.apple.com, update.googleapis.com, dl.google.com${NC}"
     read -p "SNI域名 [${DEFAULT_SNI}]: " HTTPS_SNI
     HTTPS_SNI=${HTTPS_SNI:-${DEFAULT_SNI}}
     
@@ -1807,7 +1807,7 @@ setup_anytls() {
     read_port_with_check 443
     
     echo -e "${YELLOW}请输入SNI域名（建议使用常见HTTPS网站域名）${NC}"
-    echo -e "${CYAN}例如: itunes.apple.com, www.bing.com, time.is${NC}"
+    echo -e "${CYAN}例如: itunes.apple.com, update.googleapis.com, dl.google.com${NC}"
     read -p "SNI域名 [${DEFAULT_SNI}]: " ANYTLS_SNI
     ANYTLS_SNI=${ANYTLS_SNI:-${DEFAULT_SNI}}
     
