@@ -2,12 +2,22 @@
 
 # ============================================================
 # 脚本名称: reality_scanner.sh
-# 功能描述: 一键扫描 REALITY 协议可用的伪装域名（增强版，自动处理下载损坏）
+# 功能描述: 一键扫描 REALITY 协议可用的伪装域名 (兼容 Debian / Alpine)
 # 用法: bash reality_scanner.sh
 # ============================================================
 
 set -e
 
+# 检测 bash 路径，优先使用 /bin/bash 如果存在
+SHELL_PATH="/bin/bash"
+if [ ! -f "$SHELL_PATH" ]; then
+    SHELL_PATH=$(command -v bash)
+fi
+if [ -n "$SHELL_PATH" ]; then
+    exec "$SHELL_PATH" "$0" "$@"
+fi
+
+# 颜色输出
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -18,13 +28,13 @@ NC='\033[0m'
 THREADS=100
 TIMEOUT=5
 OUTPUT_FILE="reality_domains.csv"
+FILTERED_OUTPUT="filtered_domains.csv"
 TEMP_DIR="/tmp/RealiTLScanner"
-MAX_RETRIES=3
 
 # 显示标题
 clear
 echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}     REALITY 域名扫描器 (增强版)${NC}"
+echo -e "${GREEN}     REALITY 域名扫描器 (Debian/Alpine 兼容版)${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
 
@@ -58,106 +68,131 @@ echo ""
 echo -e "目标 VPS: ${YELLOW}$TARGET_IP${NC}"
 echo ""
 
-# 检查依赖
-check_dep() {
-    if ! command -v "$1" &> /dev/null; then
-        echo -e "${RED}错误: 未找到 $1，请先安装。${NC}"
+# 检测包管理器并安装依赖
+install_deps() {
+    if command -v apt &> /dev/null; then
+        echo -e "${GREEN}检测到 Debian/Ubuntu 系统，正在安装依赖...${NC}"
+        apt update -y
+        apt install -y curl unzip wget git build-essential
+    elif command -v apk &> /dev/null; then
+        echo -e "${GREEN}检测到 Alpine 系统，正在安装依赖...${NC}"
+        apk add --no-cache curl unzip wget git build-base go
+        # 设置 Go 环境变量
+        export PATH=$PATH:/usr/lib/go/bin
+        export GOPATH=/root/go
+        export GOBIN=/usr/local/bin
+    else
+        echo -e "${RED}不支持的包管理器，请手动安装 curl, unzip, wget, git, build-essential/go${NC}"
         exit 1
     fi
 }
-check_dep curl
-check_dep unzip
-check_dep grep
-check_dep awk
+install_deps
 
 # 检测系统架构
 detect_arch() {
-    local os=$(uname -s | tr '[:upper:]' '[:lower:]')
     local arch=$(uname -m)
     case "$arch" in
-        x86_64)  arch="amd64" ;;
-        aarch64) arch="arm64" ;;
-        arm64)   arch="arm64" ;;
-        *)       echo -e "${RED}不支持的架构: $arch${NC}"; exit 1 ;;
+        x86_64)  echo "amd64" ;;
+        aarch64) echo "arm64" ;;
+        arm64)   echo "arm64" ;;
+        *)       echo "amd64" ;; # 默认尝试 amd64
     esac
-    echo "${os}_${arch}"
 }
-
 ARCH_TAG=$(detect_arch)
 echo -e "系统架构: ${YELLOW}$ARCH_TAG${NC}"
 
-# 获取最新版本号（带重试）
-get_latest_version() {
-    for i in $(seq 1 $MAX_RETRIES); do
-        LATEST_VERSION=$(curl -s https://api.github.com/repos/XTLS/RealiTLScanner/releases/latest | grep '"tag_name"' | head -1 | awk -F '"' '{print $4}')
-        if [ -n "$LATEST_VERSION" ]; then
-            echo "$LATEST_VERSION"
+# 下载或编译 RealiTLScanner
+setup_scanner() {
+    mkdir -p "$TEMP_DIR"
+    cd "$TEMP_DIR"
+    
+    # 先尝试下载预编译版本
+    echo -e "${GREEN}[1/3] 尝试下载 RealiTLScanner...${NC}"
+    # 使用已知稳定版本 v0.2.1 (因为 v0.2.3 没有 arm64 版本)
+    LATEST_VERSION="v0.2.1"
+    DOWNLOAD_URL="https://github.com/XTLS/RealiTLScanner/releases/download/${LATEST_VERSION}/RealiTLScanner_${LATEST_VERSION}_linux_${ARCH_TAG}.zip"
+    
+    if wget -O scanner.zip "$DOWNLOAD_URL" 2>/dev/null; then
+        if unzip -o scanner.zip 2>/dev/null; then
+            chmod +x RealiTLScanner
+            echo -e "${GREEN}预编译版本下载成功。${NC}"
             return 0
         fi
-        echo -e "${YELLOW}获取版本号失败，重试 $i/$MAX_RETRIES ...${NC}"
-        sleep 2
-    done
-    return 1
+    fi
+    
+    # 如果预编译失败或无法运行，尝试编译
+    echo -e "${YELLOW}预编译版本不可用，尝试从源码编译...${NC}"
+    echo -e "${GREEN}[2/3] 从源码编译 RealiTLScanner...${NC}"
+    
+    # 克隆仓库
+    git clone https://github.com/XTLS/RealiTLScanner.git build_src
+    cd build_src
+    
+    # 编译
+    go mod tidy
+    CGO_ENABLED=0 go build -o RealiTLScanner
+    
+    if [ -f "RealiTLScanner" ]; then
+        cp RealiTLScanner "$TEMP_DIR/"
+        cd "$TEMP_DIR"
+        echo -e "${GREEN}源码编译成功。${NC}"
+        return 0
+    else
+        echo -e "${RED}编译失败。${NC}"
+        exit 1
+    fi
 }
+setup_scanner
 
-echo -e "正在获取 RealiTLScanner 最新版本..."
-LATEST_VERSION=$(get_latest_version)
-if [ -z "$LATEST_VERSION" ]; then
-    echo -e "${RED}错误: 无法获取最新版本号，请检查网络。${NC}"
-    exit 1
-fi
-echo -e "最新版本: ${YELLOW}$LATEST_VERSION${NC}"
-
-# 下载并验证 zip 文件
-DOWNLOAD_URL="https://github.com/XTLS/RealiTLScanner/releases/download/${LATEST_VERSION}/RealiTLScanner_${LATEST_VERSION}_${ARCH_TAG}.zip"
-ZIP_FILE="scanner.zip"
-
-mkdir -p "$TEMP_DIR"
-cd "$TEMP_DIR"
-
-download_with_retry() {
-    rm -f "$ZIP_FILE"
-    for i in $(seq 1 $MAX_RETRIES); do
-        echo -e "正在下载 (尝试 $i/$MAX_RETRIES): $DOWNLOAD_URL"
-        # 使用 curl 下载，显示进度，失败时自动重试
-        if curl -L --fail --retry 2 --retry-delay 2 -o "$ZIP_FILE" "$DOWNLOAD_URL" --progress-bar; then
-            # 检查文件是否为有效的 zip
-            if file "$ZIP_FILE" | grep -q "Zip archive"; then
-                echo -e "${GREEN}下载成功且文件有效。${NC}"
-                return 0
-            else
-                echo -e "${RED}下载的文件不是有效的 zip 格式。${NC}"
-                rm -f "$ZIP_FILE"
-            fi
-        else
-            echo -e "${RED}下载失败。${NC}"
+# 安装 cdncheck 工具 (用于后续过滤)
+setup_cdncheck() {
+    echo -e "${GREEN}[3/3] 安装 cdncheck 工具...${NC}"
+    
+    # 检查是否已安装
+    if command -v cdncheck &> /dev/null; then
+        echo -e "${GREEN}cdncheck 已安装。${NC}"
+        return 0
+    fi
+    
+    # 尝试使用 go 安装
+    if command -v go &> /dev/null; then
+        go install -v github.com/projectdiscovery/cdncheck/cmd/cdncheck@latest
+        # 将 go bin 目录加入 PATH
+        export PATH=$PATH:$(go env GOPATH)/bin
+        if command -v cdncheck &> /dev/null; then
+            echo -e "${GREEN}cdncheck 安装成功。${NC}"
+            return 0
         fi
-        sleep 3
-    done
-    return 1
+    fi
+    
+    echo -e "${YELLOW}cdncheck 安装失败，将跳过 CDN 过滤步骤。${NC}"
 }
-
-if ! download_with_retry; then
-    echo -e "${RED}多次下载失败，请手动下载并放置到 $TEMP_DIR。${NC}"
-    echo "下载地址: $DOWNLOAD_URL"
-    exit 1
-fi
-
-# 解压
-echo -e "正在解压..."
-if ! unzip -o "$ZIP_FILE"; then
-    echo -e "${RED}解压失败，文件可能已损坏。请手动下载。${NC}"
-    exit 1
-fi
-chmod +x RealiTLScanner
+setup_cdncheck
 
 # 开始扫描
 echo -e "${GREEN}开始扫描 (线程: $THREADS, 超时: ${TIMEOUT}s)...${NC}"
 ./RealiTLScanner -addr "$TARGET_IP" -port 443 -thread "$THREADS" -timeout "$TIMEOUT" -out "$OUTPUT_FILE"
 
+# CDN 过滤（如果 cdncheck 可用）
+if command -v cdncheck &> /dev/null && [ -f "$OUTPUT_FILE" ]; then
+    echo -e "${GREEN}正在过滤套了 CDN 的域名...${NC}"
+    > "$FILTERED_OUTPUT"  # 清空或创建文件
+    tail -n +2 "$OUTPUT_FILE" | awk -F',' '{print $1}' | while read domain; do
+        if [[ -n "$domain" ]]; then
+            # 调用 cdncheck 判断，如果没有输出则表示非 CDN 域名
+            if ! cdncheck -i "$domain" 2>/dev/null | grep -q '.'; then
+                grep "^$domain," "$OUTPUT_FILE" >> "$FILTERED_OUTPUT"
+            fi
+        fi
+    done
+    RESULT_FILE="$FILTERED_OUTPUT"
+else
+    RESULT_FILE="$OUTPUT_FILE"
+fi
+
 # 输出结果
-if [ -f "$OUTPUT_FILE" ]; then
-    LINE_COUNT=$(wc -l < "$OUTPUT_FILE")
+if [ -f "$RESULT_FILE" ]; then
+    LINE_COUNT=$(wc -l < "$RESULT_FILE")
     if [ "$LINE_COUNT" -gt 1 ]; then
         echo ""
         echo -e "${GREEN}========================================${NC}"
@@ -167,12 +202,12 @@ if [ -f "$OUTPUT_FILE" ]; then
         echo ""
         echo -e "${BLUE}域名                              | 延迟 | 证书详情${NC}"
         echo "----------------------------------|------|-----------------------------"
-        tail -n +2 "$OUTPUT_FILE" | head -20 | awk -F',' '{printf "%-32s | %4s | %s\n", $1, $2, substr($3,1,40)}'
+        tail -n +2 "$RESULT_FILE" | head -20 | awk -F',' '{printf "%-32s | %4s | %s\n", $1, $2, substr($3,1,40)}'
         if [ "$LINE_COUNT" -gt 21 ]; then
             echo "... 还有 $((LINE_COUNT-21)) 行未显示，请查看完整文件。"
         fi
         echo ""
-        echo -e "完整结果已保存到: ${YELLOW}$(pwd)/$OUTPUT_FILE${NC}"
+        echo -e "完整结果已保存到: ${YELLOW}$(pwd)/$RESULT_FILE${NC}"
     else
         echo -e "${RED}未找到任何可用域名。可以尝试增加线程数或降低超时时间。${NC}"
     fi
