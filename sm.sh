@@ -2,13 +2,12 @@
 
 # ============================================================
 # 脚本名称: reality_scanner.sh
-# 功能描述: REALITY 域名扫描器 - 交互式，支持电脑/VPS运行
+# 功能描述: 一键扫描 REALITY 协议可用的伪装域名（增强版，自动处理下载损坏）
 # 用法: bash reality_scanner.sh
 # ============================================================
 
 set -e
 
-# 颜色
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -20,11 +19,12 @@ THREADS=100
 TIMEOUT=5
 OUTPUT_FILE="reality_domains.csv"
 TEMP_DIR="/tmp/RealiTLScanner"
+MAX_RETRIES=3
 
 # 显示标题
 clear
 echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}     REALITY 域名一键扫描器${NC}"
+echo -e "${GREEN}     REALITY 域名扫描器 (增强版)${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
 
@@ -46,23 +46,16 @@ if [ "$RUN_ENV" == "1" ]; then
 elif [ "$RUN_ENV" == "2" ]; then
     read -p "请输入目标 VPS 的 IP 地址: " TARGET_IP
     if [ -z "$TARGET_IP" ]; then
-        echo -e "${RED}错误: IP 地址不能为空。${NC}"
-        exit 1
-    fi
-    # 简单验证 IP 格式
-    if ! echo "$TARGET_IP" | grep -qE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$'; then
-        echo -e "${RED}错误: 无效的 IP 地址格式。${NC}"
+        echo -e "${RED}错误: IP 不能为空。${NC}"
         exit 1
     fi
 else
-    echo -e "${RED}无效选项，请输入 1 或 2。${NC}"
+    echo -e "${RED}无效选项。${NC}"
     exit 1
 fi
 
 echo ""
 echo -e "目标 VPS: ${YELLOW}$TARGET_IP${NC}"
-echo -e "线程数:   ${YELLOW}$THREADS${NC}"
-echo -e "超时:     ${YELLOW}$TIMEOUT 秒${NC}"
 echo ""
 
 # 检查依赖
@@ -93,30 +86,73 @@ detect_arch() {
 ARCH_TAG=$(detect_arch)
 echo -e "系统架构: ${YELLOW}$ARCH_TAG${NC}"
 
-# 获取最新版本
+# 获取最新版本号（带重试）
+get_latest_version() {
+    for i in $(seq 1 $MAX_RETRIES); do
+        LATEST_VERSION=$(curl -s https://api.github.com/repos/XTLS/RealiTLScanner/releases/latest | grep '"tag_name"' | head -1 | awk -F '"' '{print $4}')
+        if [ -n "$LATEST_VERSION" ]; then
+            echo "$LATEST_VERSION"
+            return 0
+        fi
+        echo -e "${YELLOW}获取版本号失败，重试 $i/$MAX_RETRIES ...${NC}"
+        sleep 2
+    done
+    return 1
+}
+
 echo -e "正在获取 RealiTLScanner 最新版本..."
-LATEST_VERSION=$(curl -s https://api.github.com/repos/XTLS/RealiTLScanner/releases/latest | grep '"tag_name"' | head -1 | awk -F '"' '{print $4}')
+LATEST_VERSION=$(get_latest_version)
 if [ -z "$LATEST_VERSION" ]; then
     echo -e "${RED}错误: 无法获取最新版本号，请检查网络。${NC}"
     exit 1
 fi
 echo -e "最新版本: ${YELLOW}$LATEST_VERSION${NC}"
 
-# 下载工具
+# 下载并验证 zip 文件
 DOWNLOAD_URL="https://github.com/XTLS/RealiTLScanner/releases/download/${LATEST_VERSION}/RealiTLScanner_${LATEST_VERSION}_${ARCH_TAG}.zip"
-echo -e "下载地址: $DOWNLOAD_URL"
+ZIP_FILE="scanner.zip"
 
 mkdir -p "$TEMP_DIR"
 cd "$TEMP_DIR"
 
-echo -e "正在下载..."
-curl -L -o scanner.zip "$DOWNLOAD_URL" --progress-bar
+download_with_retry() {
+    rm -f "$ZIP_FILE"
+    for i in $(seq 1 $MAX_RETRIES); do
+        echo -e "正在下载 (尝试 $i/$MAX_RETRIES): $DOWNLOAD_URL"
+        # 使用 curl 下载，显示进度，失败时自动重试
+        if curl -L --fail --retry 2 --retry-delay 2 -o "$ZIP_FILE" "$DOWNLOAD_URL" --progress-bar; then
+            # 检查文件是否为有效的 zip
+            if file "$ZIP_FILE" | grep -q "Zip archive"; then
+                echo -e "${GREEN}下载成功且文件有效。${NC}"
+                return 0
+            else
+                echo -e "${RED}下载的文件不是有效的 zip 格式。${NC}"
+                rm -f "$ZIP_FILE"
+            fi
+        else
+            echo -e "${RED}下载失败。${NC}"
+        fi
+        sleep 3
+    done
+    return 1
+}
+
+if ! download_with_retry; then
+    echo -e "${RED}多次下载失败，请手动下载并放置到 $TEMP_DIR。${NC}"
+    echo "下载地址: $DOWNLOAD_URL"
+    exit 1
+fi
+
+# 解压
 echo -e "正在解压..."
-unzip -o scanner.zip
+if ! unzip -o "$ZIP_FILE"; then
+    echo -e "${RED}解压失败，文件可能已损坏。请手动下载。${NC}"
+    exit 1
+fi
 chmod +x RealiTLScanner
 
 # 开始扫描
-echo -e "${GREEN}开始扫描，请耐心等待（可能需要几分钟）...${NC}"
+echo -e "${GREEN}开始扫描 (线程: $THREADS, 超时: ${TIMEOUT}s)...${NC}"
 ./RealiTLScanner -addr "$TARGET_IP" -port 443 -thread "$THREADS" -timeout "$TIMEOUT" -out "$OUTPUT_FILE"
 
 # 输出结果
@@ -129,10 +165,8 @@ if [ -f "$OUTPUT_FILE" ]; then
         echo -e "${GREEN}========================================${NC}"
         echo -e "共找到 ${YELLOW}$((LINE_COUNT-1))${NC} 个可用域名"
         echo ""
-        # 以表格形式展示前20行（首行为标题）
         echo -e "${BLUE}域名                              | 延迟 | 证书详情${NC}"
         echo "----------------------------------|------|-----------------------------"
-        # 使用 awk 格式化输出，跳过第一行标题，只取域名、延迟、证书信息
         tail -n +2 "$OUTPUT_FILE" | head -20 | awk -F',' '{printf "%-32s | %4s | %s\n", $1, $2, substr($3,1,40)}'
         if [ "$LINE_COUNT" -gt 21 ]; then
             echo "... 还有 $((LINE_COUNT-21)) 行未显示，请查看完整文件。"
