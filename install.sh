@@ -2161,7 +2161,7 @@ parse_vless_link() {
     fi
 
     # 获取参数部分
-    local params=$(echo "$server_port_params" | grep -o '?.*' | sed 's|?||' | cut -d'#' -f1)
+    local port=$(echo "$port_params" | cut -d'?' -f1 | sed 's|/.*||')
 
     # 默认值
     local security="none"
