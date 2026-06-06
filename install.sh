@@ -598,32 +598,41 @@ load_inbounds_from_config() {
     
     INBOUNDS_JSON="$inbound_list"
     
-    # 从路由规则中恢复中转配置（只处理入站中转规则，忽略分流域名规则）
+    # 从路由规则中恢复每个节点的默认中转（查找针对该入站且没有域名/IP条件的规则）
+    # 注意：路由规则中可能有多个匹配该入站，需要找到最后一条没有域名/IP的规则作为默认
     local route_rules=$(jq -c '.route.rules[]? // empty' "${CONFIG_FILE}" 2>/dev/null)
     if [[ -n "$route_rules" ]]; then
+        # 先收集所有入站对应的默认中转（无域名/IP条件）
+        declare -A default_relay
         while IFS= read -r rule; do
-            # 检查是否为入站中转规则（只处理包含inbound字段且不包含域名/IP匹配字段的规则）
+            # 检查是否包含 inbound 字段
             local has_inbound=$(echo "$rule" | jq -e '.inbound // empty' 2>/dev/null)
+            if [[ -z "$has_inbound" ]]; then
+                continue
+            fi
+            # 检查是否包含域名或IP条件（如果包含，则是分流规则，跳过）
             local has_domain=$(echo "$rule" | jq -e '.domain // .domain_suffix // .domain_keyword // .domain_regex // empty' 2>/dev/null)
             local has_ip=$(echo "$rule" | jq -e '.ip_cidr // .ip // empty' 2>/dev/null)
-            
-            # 只处理入站中转规则，忽略域名/IP分流规则
-            if [[ -n "$has_inbound" && -z "$has_domain" && -z "$has_ip" ]]; then
-                local inbound_array=$(echo "$rule" | jq -r '.inbound[]? // empty' 2>/dev/null)
-                local outbound=$(echo "$rule" | jq -r '.outbound // ""' 2>/dev/null)
-                
-                if [[ -n "$outbound" && "$outbound" != "direct" ]]; then
-                    while IFS= read -r inbound_tag; do
-                        for i in "${!INBOUND_TAGS[@]}"; do
-                            if [[ "${INBOUND_TAGS[$i]}" == "$inbound_tag" ]]; then
-                                INBOUND_RELAY_TAGS[$i]="$outbound"
-                                break
-                            fi
-                        done
-                    done <<< "$inbound_array"
-                fi
+            if [[ -n "$has_domain" || -n "$has_ip" ]]; then
+                continue
+            fi
+            # 这是一个默认路由规则
+            local inbound_array=$(echo "$rule" | jq -r '.inbound[]? // empty' 2>/dev/null)
+            local outbound=$(echo "$rule" | jq -r '.outbound // ""' 2>/dev/null)
+            if [[ -n "$outbound" && "$outbound" != "direct" ]]; then
+                while IFS= read -r inbound_tag; do
+                    default_relay["$inbound_tag"]="$outbound"
+                done <<< "$inbound_array"
             fi
         done <<< "$route_rules"
+        
+        # 应用到 INBOUND_RELAY_TAGS
+        for i in "${!INBOUND_TAGS[@]}"; do
+            local tag="${INBOUND_TAGS[$i]}"
+            if [[ -n "${default_relay[$tag]}" ]]; then
+                INBOUND_RELAY_TAGS[$i]="${default_relay[$tag]}"
+            fi
+        done
     fi
     
     return 0
@@ -2920,7 +2929,7 @@ EOFCONFIG
         fi
     fi
 }
-# ==================== 配置生成 ====================
+# ==================== 配置生成（修复路由逻辑） ====================
 generate_config() {
     print_info "生成最终配置文件..."
 
@@ -2965,11 +2974,23 @@ generate_config() {
     local route_rules=()
     local has_relay=0
     
-    # 构建入站分流规则映射：inbound_tag -> (分流规则数组)
-    declare -A inbound_has_routes
+    # 1. 首先添加所有分流域名规则（无论节点默认是中转还是直连）
     for route in "${DOMAIN_ROUTES[@]}"; do
         IFS='|' read -r inbound_tag match_type match_value relay_tag desc <<< "$route"
         [[ -z "$inbound_tag" || -z "$match_type" || -z "$match_value" || -z "$relay_tag" ]] && continue
+        
+        # 检查中转是否存在
+        local relay_exists=0
+        for rt in "${RELAY_TAGS[@]}"; do
+            if [[ "$rt" == "$relay_tag" ]]; then
+                relay_exists=1
+                break
+            fi
+        done
+        if [[ $relay_exists -eq 0 ]]; then
+            print_warning "分流规则引用的中转 ${relay_tag} 不存在，跳过规则: ${match_type}=${match_value}"
+            continue
+        fi
         
         # 根据匹配类型生成对应的 sing-box 规则
         local rule_part=""
@@ -2991,25 +3012,31 @@ generate_config() {
                 ;;
         esac
         
-        # 生成完整的路由规则（同时匹配入站和分流条件）
         route_rules+=("{\"inbound\":[\"${inbound_tag}\"],${rule_part},\"outbound\":\"${relay_tag}\"}")
-        inbound_has_routes["$inbound_tag"]=1
         has_relay=1
     done
     
-    # 为每个节点添加默认路由规则
+    # 2. 为每个节点添加默认路由（仅当节点配置了中转且不是 direct）
     for i in "${!INBOUND_TAGS[@]}"; do
         local inbound_tag="${INBOUND_TAGS[$i]}"
         local relay_tag="${INBOUND_RELAY_TAGS[$i]}"
         
+        # 如果节点配置了具体的中转（非 direct），则添加兜底规则
         if [[ "$relay_tag" != "direct" ]]; then
-            # 有分流规则的节点：分流规则匹配不到时走直连
-            if [[ -n "${inbound_has_routes["$inbound_tag"]}" ]]; then
-                route_rules+=("{\"inbound\":[\"${inbound_tag}\"],\"outbound\":\"direct\"}")
-            else
-                # 没有分流规则的节点：全部走中转（原行为）
-                route_rules+=("{\"inbound\":[\"${inbound_tag}\"],\"outbound\":\"${relay_tag}\"}")
+            # 检查中转是否存在
+            local relay_exists=0
+            for rt in "${RELAY_TAGS[@]}"; do
+                if [[ "$rt" == "$relay_tag" ]]; then
+                    relay_exists=1
+                    break
+                fi
+            done
+            if [[ $relay_exists -eq 0 ]]; then
+                print_warning "节点 ${inbound_tag} 配置的中转 ${relay_tag} 不存在，将改为直连"
+                INBOUND_RELAY_TAGS[$i]="direct"
+                continue
             fi
+            route_rules+=("{\"inbound\":[\"${inbound_tag}\"],\"outbound\":\"${relay_tag}\"}")
             has_relay=1
         fi
     done
