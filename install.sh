@@ -2143,10 +2143,16 @@ parse_vless_link() {
     local server_port_params=$(echo "$data" | cut -d'@' -f2)
     local server=$(echo "$server_port_params" | cut -d':' -f1)
     local port_params=$(echo "$server_port_params" | cut -d':' -f2)
-    local port=$(echo "$port_params" | cut -d'?' -f1)
+    # 清理端口：去掉 ? 及之后的内容，再去掉 / 及之后的内容
+    local port=$(echo "$port_params" | cut -d'?' -f1 | sed 's|/.*||')
+    # 确保端口是数字
+    if ! [[ "$port" =~ ^[0-9]+$ ]]; then
+        print_error "端口无效: ${port}"
+        return 1
+    fi
 
     # 获取参数部分
-    local params=$(echo "$port_params" | grep -o '?.*' | sed 's|?||' | cut -d'#' -f1)
+    local params=$(echo "$server_port_params" | grep -o '?.*' | sed 's|?||' | cut -d'#' -f1)
 
     # 默认值
     local security="none"
@@ -2158,7 +2164,6 @@ parse_vless_link() {
 
     # 解析参数
     if [[ -n "$params" ]]; then
-        # 使用 & 分割参数
         IFS='&' read -ra param_pairs <<< "$params"
         for pair in "${param_pairs[@]}"; do
             key="${pair%%=*}"
@@ -2185,7 +2190,6 @@ parse_vless_link() {
     \"utls\": {\"enabled\": true, \"fingerprint\": \"chrome\"}
   }"
     elif [[ "$security" == "reality" ]]; then
-        # REALITY 配置
         if [[ -z "$pbk" ]]; then
             print_error "REALITY 链接缺少公钥 (pbk)"
             return 1
