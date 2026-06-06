@@ -2144,51 +2144,100 @@ parse_vless_link() {
     local server=$(echo "$server_port_params" | cut -d':' -f1)
     local port_params=$(echo "$server_port_params" | cut -d':' -f2)
     local port=$(echo "$port_params" | cut -d'?' -f1)
-    
+
+    # 获取参数部分
     local params=$(echo "$port_params" | grep -o '?.*' | sed 's|?||' | cut -d'#' -f1)
-    
+
+    # 默认值
     local security="none"
     local sni=""
     local flow=""
-    
+    local pbk=""
+    local sid=""
+    local encryption="none"
+
+    # 解析参数
     if [[ -n "$params" ]]; then
-        [[ "$params" =~ security=([^&]+) ]] && security="${BASH_REMATCH[1]}"
-        [[ "$params" =~ sni=([^&]+) ]] && sni="${BASH_REMATCH[1]}"
-        [[ "$params" =~ flow=([^&]+) ]] && flow="${BASH_REMATCH[1]}"
+        # 使用 & 分割参数
+        IFS='&' read -ra param_pairs <<< "$params"
+        for pair in "${param_pairs[@]}"; do
+            key="${pair%%=*}"
+            value="${pair#*=}"
+            case "$key" in
+                security) security="$value" ;;
+                sni) sni="$value" ;;
+                flow) flow="$value" ;;
+                pbk) pbk="$value" ;;
+                sid) sid="$value" ;;
+                encryption) encryption="$value" ;;
+            esac
+        done
     fi
-    
+
+    # 构建 tls 配置
     local tls_config=""
-    if [[ "$security" == "tls" || "$security" == "reality" ]]; then
+    local reality_config=""
+    if [[ "$security" == "tls" ]]; then
         tls_config=",
   \"tls\": {
     \"enabled\": true,
-    \"server_name\": \"${sni}\"
+    \"server_name\": \"${sni}\",
+    \"utls\": {\"enabled\": true, \"fingerprint\": \"chrome\"}
+  }"
+    elif [[ "$security" == "reality" ]]; then
+        # REALITY 配置
+        if [[ -z "$pbk" ]]; then
+            print_error "REALITY 链接缺少公钥 (pbk)"
+            return 1
+        fi
+        if [[ -z "$sid" ]]; then
+            sid=""
+        fi
+        reality_config=",
+  \"tls\": {
+    \"enabled\": true,
+    \"server_name\": \"${sni}\",
+    \"utls\": {\"enabled\": true, \"fingerprint\": \"chrome\"},
+    \"reality\": {
+      \"enabled\": true,
+      \"public_key\": \"${pbk}\",
+      \"short_id\": \"${sid}\"
+    }
   }"
     fi
-    
+
     local flow_config=""
     [[ -n "$flow" ]] && flow_config=",
   \"flow\": \"${flow}\""
-    
+
+    local encryption_config=""
+    [[ "$encryption" != "none" ]] && encryption_config=",
+  \"encryption\": \"${encryption}\""
+
     local tag="relay-vless-${#RELAY_TAGS[@]}"
     local relay_json="{
   \"type\": \"vless\",
   \"tag\": \"${tag}\",
   \"server\": \"${server}\",
   \"server_port\": ${port},
-  \"uuid\": \"${uuid}\"${flow_config}${tls_config}
+  \"uuid\": \"${uuid}\"${encryption_config}${flow_config}${tls_config}${reality_config}
 }"
+
     local relay_desc
     if [[ -n "$custom_desc" ]]; then
         relay_desc="$custom_desc"
     else
-        relay_desc="VLESS ${server}:${port}"
+        if [[ "$security" == "reality" ]]; then
+            relay_desc="VLESS+REALITY ${server}:${port} (SNI: ${sni})"
+        else
+            relay_desc="VLESS ${server}:${port}"
+        fi
     fi
-    
+
     RELAY_TAGS+=("$tag")
     RELAY_JSONS+=("$relay_json")
     RELAY_DESCS+=("$relay_desc")
-    
+
     save_relays_to_file
     print_success "VLESS 中转已添加: ${relay_desc}"
 }
