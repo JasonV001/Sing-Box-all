@@ -2292,7 +2292,6 @@ parse_trojan_link() {
 parse_hysteria2_link() {
     local link="$1"
     local custom_desc="$2"
-    # 兼容 hy2:// 和 hysteria2:// 前缀
     local data=$(echo "$link" | sed -E 's|^(hy2|hysteria2)://||')
     local userinfo=$(echo "$data" | cut -d'@' -f1)
     local server_port_params=$(echo "$data" | cut -d'@' -f2)
@@ -2325,11 +2324,13 @@ parse_hysteria2_link() {
         done
     fi
 
-    # 构建 tls 配置
+    local insecure_bool="false"
+    [[ "$insecure" == "1" || "$insecure" == "true" ]] && insecure_bool="true"
+
     local tls_config="{
     \"enabled\": true,
     \"server_name\": \"${sni}\",
-    \"insecure\": ${insecure}
+    \"insecure\": ${insecure_bool}
   }"
     local objs_config=""
     if [[ "$obfs_type" == "salamander" && -n "$obfs_password" ]]; then
@@ -2368,7 +2369,6 @@ parse_hysteria2_link() {
 parse_anytls_link() {
     local link="$1"
     local custom_desc="$2"
-    # 格式: anytls://password@server:port?security=tls&sni=example.com&insecure=1
     local data=$(echo "$link" | sed 's|anytls://||')
     local userinfo=$(echo "$data" | cut -d'@' -f1)
     local server_port_params=$(echo "$data" | cut -d'@' -f2)
@@ -2397,6 +2397,10 @@ parse_anytls_link() {
         done
     fi
 
+    # 转换为布尔值
+    local insecure_bool="false"
+    [[ "$insecure" == "1" || "$insecure" == "true" ]] && insecure_bool="true"
+
     local tag="relay-anytls-${#RELAY_TAGS[@]}"
     local relay_json="{
   \"type\": \"anytls\",
@@ -2407,7 +2411,7 @@ parse_anytls_link() {
   \"tls\": {
     \"enabled\": true,
     \"server_name\": \"${sni}\",
-    \"insecure\": ${insecure}
+    \"insecure\": ${insecure_bool}
   }
 }"
 
