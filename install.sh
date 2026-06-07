@@ -2288,6 +2288,142 @@ parse_trojan_link() {
     save_relays_to_file
     print_success "Trojan 中转已添加: ${relay_desc}"
 }
+parse_hysteria2_link() {
+    local link="$1"
+    local custom_desc="$2"
+    # 格式: hysteria2://password@server:port?insecure=1&sni=example.com&obfs=salamander&obfs-password=xxx
+    local data=$(echo "$link" | sed 's|hysteria2://||')
+    local userinfo=$(echo "$data" | cut -d'@' -f1)
+    local server_port_params=$(echo "$data" | cut -d'@' -f2)
+    local server=$(echo "$server_port_params" | cut -d':' -f1)
+    local port_params=$(echo "$server_port_params" | cut -d':' -f2)
+    local port=$(echo "$port_params" | cut -d'?' -f1 | sed 's|/.*||')
+    if ! [[ "$port" =~ ^[0-9]+$ ]]; then
+        print_error "端口无效: ${port}"
+        return 1
+    fi
+
+    local params=$(echo "$server_port_params" | grep -o '?.*' | sed 's|?||' | cut -d'#' -f1)
+    local password="$userinfo"
+    local sni=""
+    local insecure="false"
+    local obfs_type=""
+    local obfs_password=""
+
+    if [[ -n "$params" ]]; then
+        IFS='&' read -ra param_pairs <<< "$params"
+        for pair in "${param_pairs[@]}"; do
+            key="${pair%%=*}"
+            value="${pair#*=}"
+            case "$key" in
+                sni) sni="$value" ;;
+                insecure) insecure="$value" ;;
+                obfs) obfs_type="$value" ;;
+                obfs-password) obfs_password="$value" ;;
+            esac
+        done
+    fi
+
+    # 构建 tls 配置（Hysteria2 强制 TLS）
+    local tls_config="{
+    \"enabled\": true,
+    \"server_name\": \"${sni}\",
+    \"insecure\": ${insecure}
+  }"
+    local objs_config=""
+    if [[ "$obfs_type" == "salamander" && -n "$obfs_password" ]]; then
+        objs_config=",
+  \"obfs\": {
+    \"type\": \"salamander\",
+    \"password\": \"${obfs_password}\"
+  }"
+    fi
+
+    local tag="relay-hysteria2-${#RELAY_TAGS[@]}"
+    local relay_json="{
+  \"type\": \"hysteria2\",
+  \"tag\": \"${tag}\",
+  \"server\": \"${server}\",
+  \"server_port\": ${port},
+  \"password\": \"${password}\",
+  \"tls\": ${tls_config}${objs_config}
+}"
+
+    local relay_desc
+    if [[ -n "$custom_desc" ]]; then
+        relay_desc="$custom_desc"
+    else
+        relay_desc="Hysteria2 ${server}:${port} (SNI: ${sni})"
+    fi
+
+    RELAY_TAGS+=("$tag")
+    RELAY_JSONS+=("$relay_json")
+    RELAY_DESCS+=("$relay_desc")
+
+    save_relays_to_file
+    print_success "Hysteria2 中转已添加: ${relay_desc}"
+}
+
+parse_anytls_link() {
+    local link="$1"
+    local custom_desc="$2"
+    # 格式: anytls://password@server:port?security=tls&sni=example.com&insecure=1
+    local data=$(echo "$link" | sed 's|anytls://||')
+    local userinfo=$(echo "$data" | cut -d'@' -f1)
+    local server_port_params=$(echo "$data" | cut -d'@' -f2)
+    local server=$(echo "$server_port_params" | cut -d':' -f1)
+    local port_params=$(echo "$server_port_params" | cut -d':' -f2)
+    local port=$(echo "$port_params" | cut -d'?' -f1 | sed 's|/.*||')
+    if ! [[ "$port" =~ ^[0-9]+$ ]]; then
+        print_error "端口无效: ${port}"
+        return 1
+    fi
+
+    local params=$(echo "$server_port_params" | grep -o '?.*' | sed 's|?||' | cut -d'#' -f1)
+    local password="$userinfo"
+    local sni=""
+    local insecure="false"
+
+    if [[ -n "$params" ]]; then
+        IFS='&' read -ra param_pairs <<< "$params"
+        for pair in "${param_pairs[@]}"; do
+            key="${pair%%=*}"
+            value="${pair#*=}"
+            case "$key" in
+                sni) sni="$value" ;;
+                insecure) insecure="$value" ;;
+            esac
+        done
+    fi
+
+    local tag="relay-anytls-${#RELAY_TAGS[@]}"
+    local relay_json="{
+  \"type\": \"anytls\",
+  \"tag\": \"${tag}\",
+  \"server\": \"${server}\",
+  \"server_port\": ${port},
+  \"password\": \"${password}\",
+  \"tls\": {
+    \"enabled\": true,
+    \"server_name\": \"${sni}\",
+    \"insecure\": ${insecure}
+  }
+}"
+
+    local relay_desc
+    if [[ -n "$custom_desc" ]]; then
+        relay_desc="$custom_desc"
+    else
+        relay_desc="AnyTLS ${server}:${port} (SNI: ${sni})"
+    fi
+
+    RELAY_TAGS+=("$tag")
+    RELAY_JSONS+=("$relay_json")
+    RELAY_DESCS+=("$relay_desc")
+
+    save_relays_to_file
+    print_success "AnyTLS 中转已添加: ${relay_desc}"
+}
 
 setup_relay() {
     # 加载中转配置和分流规则
