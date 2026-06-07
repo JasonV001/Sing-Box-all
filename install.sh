@@ -1817,7 +1817,7 @@ setup_anytls() {
     read_port_with_check 443
 
     echo -e "${YELLOW}是否启用 REALITY 伪装？(y/N)${NC}"
-    echo -e "${CYAN}启用后，客户端请使用 VLESS+REALITY 协议连接${NC}"
+    echo -e "${CYAN}启用后，服务端使用 AnyTLS+REALITY，客户端需使用 sing-box 并导入 JSON 配置${NC}"
     read -p "启用 REALITY? [y/N]: " ENABLE_REALITY
     ENABLE_REALITY=${ENABLE_REALITY:-N}
 
@@ -1866,9 +1866,10 @@ setup_anytls() {
     local PROTO=""
     local EXTRA_INFO=""
     local LINK=""
+    local CLIENT_JSON_PATH=""
 
     if [[ "$ENABLE_REALITY" =~ ^[Yy]$ ]]; then
-        # AnyTLS + REALITY 组合入站（无需证书）
+        # AnyTLS + REALITY 入站（无需证书）
         inbound="{
   \"type\": \"anytls\",
   \"tag\": \"anytls-reality-${PORT}\",
@@ -1892,8 +1893,56 @@ setup_anytls() {
 }"
         PROTO="AnyTLS+REALITY"
         EXTRA_INFO="密码: ${ANYTLS_PASSWORD}\nREALITY 公钥: ${REALITY_PUBLIC}\nShort ID: ${SHORT_ID}\nSNI: ${ANYTLS_SNI}"
-        # 生成客户端 VLESS+REALITY 链接
-        LINK="vless://${UUID}@${SERVER_IP}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${ANYTLS_SNI}&fp=chrome&pbk=${REALITY_PUBLIC}&sid=${SHORT_ID}&type=tcp#AnyTLS+REALITY-${SERVER_IP}"
+
+        # 生成客户端 JSON 配置文件（sing-box 格式）
+        CLIENT_JSON_PATH="${LINK_DIR}/anytls_reality_client_${PORT}.json"
+        cat > "${CLIENT_JSON_PATH}" << EOF
+{
+  "log": { "level": "info" },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "interface_name": "sing-box0",
+      "inet4_address": "172.19.0.1/30",
+      "auto_route": true,
+      "stack": "system"
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "anytls",
+      "tag": "AnyTLS+REALITY",
+      "server": "${SERVER_IP}",
+      "server_port": ${PORT},
+      "password": "${ANYTLS_PASSWORD}",
+      "tls": {
+        "enabled": true,
+        "server_name": "${ANYTLS_SNI}",
+        "utls": { "enabled": true, "fingerprint": "chrome" },
+        "reality": {
+          "enabled": true,
+          "public_key": "${REALITY_PUBLIC}",
+          "short_id": "${SHORT_ID}"
+        }
+      }
+    },
+    { "type": "direct", "tag": "direct" },
+    { "type": "block", "tag": "block" }
+  ],
+  "route": {
+    "rules": [
+      { "geosite": "cn", "outbound": "direct" },
+      { "geoip": "cn", "outbound": "direct" }
+    ],
+    "final": "AnyTLS+REALITY",
+    "auto_detect_interface": true
+  }
+}
+EOF
+        chmod 644 "${CLIENT_JSON_PATH}"
+        # 不生成 anytls:// 链接，而是显示 JSON 路径
+        LINK="请使用 sing-box 客户端，配置文件已保存到: ${CLIENT_JSON_PATH}"
     else
         # 纯 AnyTLS 入站（需要证书）
         inbound="{
@@ -1929,18 +1978,22 @@ setup_anytls() {
     INBOUND_SNIS+=("${ANYTLS_SNI}")
     INBOUND_RELAY_TAGS+=("direct")
 
-    # 显示新添加节点的链接
+    # 显示新添加节点的信息
     CURRENT_NEW_LINKS=""
-    CURRENT_NEW_LINKS="${CURRENT_NEW_LINKS}[${PROTO}] ${SERVER_IP}:${PORT} (SNI: ${ANYTLS_SNI})\n${LINK}\n----------------------------------------\n\n"
-
-    # 保存到链接文件
     if [[ "$ENABLE_REALITY" =~ ^[Yy]$ ]]; then
-        add_link "$LINK" "AnyTLS+REALITY" "$EXTRA_INFO" "${SERVER_IP}" "${PORT}" "${ANYTLS_SNI}"
+        CURRENT_NEW_LINKS="${CURRENT_NEW_LINKS}[${PROTO}] ${SERVER_IP}:${PORT} (SNI: ${ANYTLS_SNI})\n${LINK}\n----------------------------------------\n\n"
+        # 调用 add_link 保存到 all.txt 等，但这里 LINK 是文本，不实际作为分享链接，所以只记录信息
+        add_link "${SERVER_IP}:${PORT} (AnyTLS+REALITY)" "${PROTO}" "$EXTRA_INFO" "${SERVER_IP}" "${PORT}" "${ANYTLS_SNI}"
     else
-        add_link "$LINK" "AnyTLS" "$EXTRA_INFO" "${SERVER_IP}" "${PORT}" "${ANYTLS_SNI}"
+        CURRENT_NEW_LINKS="${CURRENT_NEW_LINKS}[${PROTO}] ${SERVER_IP}:${PORT} (SNI: ${ANYTLS_SNI})\n${LINK}\n----------------------------------------\n\n"
+        add_link "$LINK" "${PROTO}" "$EXTRA_INFO" "${SERVER_IP}" "${PORT}" "${ANYTLS_SNI}"
     fi
 
     print_success "AnyTLS 节点添加完成 (REALITY: ${ENABLE_REALITY})"
+    if [[ "$ENABLE_REALITY" =~ ^[Yy]$ ]]; then
+        echo -e "${CYAN}客户端配置 JSON 已保存到: ${CLIENT_JSON_PATH}${NC}"
+        echo -e "${CYAN}请使用 sing-box 客户端运行: sing-box run -c ${CLIENT_JSON_PATH}${NC}"
+    fi
     save_links_to_files
 }
 # ==================== 中转链接解析 ====================
