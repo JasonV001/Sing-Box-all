@@ -1821,7 +1821,7 @@ setup_anytls() {
     read -p "启用 REALITY? [y/N]: " ENABLE_REALITY
     ENABLE_REALITY=${ENABLE_REALITY:-N}
 
-    echo -e "${YELLOW}请输入 SNI 域名（用于 TLS 证书及 REALITY handshake）${NC}"
+    echo -e "${YELLOW}请输入 SNI 域名（用于 TLS 及 REALITY handshake）${NC}"
     echo -e "${CYAN}例如: ${DEFAULT_SNI1}${NC}"
     read -p "SNI 域名 [${DEFAULT_SNI}]: " ANYTLS_SNI
     ANYTLS_SNI=${ANYTLS_SNI:-${DEFAULT_SNI}}
@@ -1831,9 +1831,6 @@ setup_anytls() {
         ANYTLS_PASSWORD=$(openssl rand -hex 16)
         save_keys_to_file
     fi
-
-    # 生成自签证书
-    gen_cert_for_sni "${ANYTLS_SNI}"
 
     # 如果启用 REALITY，确保 REALITY 密钥对存在
     if [[ "$ENABLE_REALITY" =~ ^[Yy]$ ]]; then
@@ -1846,6 +1843,9 @@ setup_anytls() {
         fi
         print_info "REALITY 公钥: ${REALITY_PUBLIC}"
         print_info "Short ID: ${SHORT_ID}"
+    else
+        # 纯 AnyTLS 需要自签证书
+        gen_cert_for_sni "${ANYTLS_SNI}"
     fi
 
     # 构建 padding_scheme（默认启用随机填充）
@@ -1868,7 +1868,7 @@ setup_anytls() {
     local LINK=""
 
     if [[ "$ENABLE_REALITY" =~ ^[Yy]$ ]]; then
-        # AnyTLS + REALITY 组合入站（客户端使用 VLESS+REALITY）
+        # AnyTLS + REALITY 组合入站（无需证书）
         inbound="{
   \"type\": \"anytls\",
   \"tag\": \"anytls-reality-${PORT}\",
@@ -1879,8 +1879,6 @@ setup_anytls() {
   \"tls\": {
     \"enabled\": true,
     \"server_name\": \"${ANYTLS_SNI}\",
-    \"certificate_path\": \"${CERT_DIR}/${ANYTLS_SNI}/cert.pem\",
-    \"key_path\": \"${CERT_DIR}/${ANYTLS_SNI}/private.key\",
     \"reality\": {
       \"enabled\": true,
       \"handshake\": {
@@ -1893,11 +1891,11 @@ setup_anytls() {
   }
 }"
         PROTO="AnyTLS+REALITY"
-        EXTRA_INFO="密码: ${ANYTLS_PASSWORD}\n证书: 自签证书 (${ANYTLS_SNI})\nREALITY 公钥: ${REALITY_PUBLIC}\nShort ID: ${SHORT_ID}"
+        EXTRA_INFO="密码: ${ANYTLS_PASSWORD}\nREALITY 公钥: ${REALITY_PUBLIC}\nShort ID: ${SHORT_ID}\nSNI: ${ANYTLS_SNI}"
         # 生成客户端 VLESS+REALITY 链接
         LINK="vless://${UUID}@${SERVER_IP}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${ANYTLS_SNI}&fp=chrome&pbk=${REALITY_PUBLIC}&sid=${SHORT_ID}&type=tcp#AnyTLS+REALITY-${SERVER_IP}"
     else
-        # 纯 AnyTLS 入站
+        # 纯 AnyTLS 入站（需要证书）
         inbound="{
   \"type\": \"anytls\",
   \"tag\": \"anytls-in-${PORT}\",
@@ -1914,7 +1912,6 @@ setup_anytls() {
 }"
         PROTO="AnyTLS"
         EXTRA_INFO="密码: ${ANYTLS_PASSWORD}\n证书: 自签证书 (${ANYTLS_SNI})"
-        # 生成客户端 AnyTLS 链接
         LINK="anytls://${ANYTLS_PASSWORD}@${SERVER_IP}:${PORT}?security=tls&fp=chrome&insecure=1&sni=${ANYTLS_SNI}&type=tcp#AnyTLS-${SERVER_IP}"
     fi
 
@@ -1932,13 +1929,11 @@ setup_anytls() {
     INBOUND_SNIS+=("${ANYTLS_SNI}")
     INBOUND_RELAY_TAGS+=("direct")
 
-    # 显示新添加节点的链接（用于 show_result）
+    # 显示新添加节点的链接
     CURRENT_NEW_LINKS=""
     CURRENT_NEW_LINKS="${CURRENT_NEW_LINKS}[${PROTO}] ${SERVER_IP}:${PORT} (SNI: ${ANYTLS_SNI})\n${LINK}\n----------------------------------------\n\n"
 
-    # 保存到全局链接变量（供 later save_links_to_files 使用）
-    # 注意：add_link 函数需要 proto 参数，这里直接调用 add_link 更规范
-    # 但为了避免重复，我们直接调用 add_link 函数保存
+    # 保存到链接文件
     if [[ "$ENABLE_REALITY" =~ ^[Yy]$ ]]; then
         add_link "$LINK" "AnyTLS+REALITY" "$EXTRA_INFO" "${SERVER_IP}" "${PORT}" "${ANYTLS_SNI}"
     else
