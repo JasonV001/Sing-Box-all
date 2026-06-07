@@ -3423,7 +3423,7 @@ show_menu() {
     echo ""
     echo -e "${GREEN}[5]${NC} HTTPS ${CYAN}→ 标准HTTPS，可过CDN${NC}"
     echo ""
-    echo -e "${GREEN}[6]${NC} AnyTLS ${CYAN}→ 通用TLS协议${NC}"
+    echo -e "${GREEN}[6]${NC} AnyTLS ${CYAN}→ 通用 TLS 协议，可启用 REALITY 伪装${NC}"
     echo ""
     read -p "选择 [1-6]: " choice
     
