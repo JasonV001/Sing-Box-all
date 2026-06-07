@@ -2292,25 +2292,40 @@ parse_trojan_link() {
 parse_hysteria2_link() {
     local link="$1"
     local custom_desc="$2"
-    local data=$(echo "$link" | sed -E 's|^(hy2|hysteria2)://||')
-    local userinfo=$(echo "$data" | cut -d'@' -f1)
-    local server_port_params=$(echo "$data" | cut -d'@' -f2)
-    local server=$(echo "$server_port_params" | cut -d':' -f1)
-    local port_params=$(echo "$server_port_params" | cut -d':' -f2)
-    local port=$(echo "$port_params" | cut -d'?' -f1 | sed 's|/.*||')
+
+    # 去除协议前缀 (hy2:// 或 hysteria2://)
+    local data="${link#*://}"
+    # 提取密码 (第一个 @ 之前)
+    local userinfo="${data%%@*}"
+    local rest="${data#*@}"
+    # 提取服务器和端口 (第一个 : 分割，但要注意 IPv6 地址)
+    # 先处理可能的 IPv6 地址 [::1] 的情况，简单起见假设是普通域名/IPv4
+    local server="${rest%%:*}"
+    local port_and_params="${rest#*:}"
+    # 提取端口（第一个 ? 之前，且去除结尾的 / 或 ? 后的部分）
+    local port="${port_and_params%%[?/]*}"
     if ! [[ "$port" =~ ^[0-9]+$ ]]; then
         print_error "端口无效: ${port}"
         return 1
     fi
 
-    local params=$(echo "$server_port_params" | grep -o '?.*' | sed 's|?||' | cut -d'#' -f1)
+    # 提取参数部分
+    local params=""
+    if [[ "$port_and_params" == *"?"* ]]; then
+        params="${port_and_params#*?}"
+        params="${params%%#*}"  # 去除可能的 # 备注
+    fi
+
+    # 默认值
     local password="$userinfo"
     local sni=""
     local insecure="false"
     local obfs_type=""
     local obfs_password=""
 
+    # 解析参数
     if [[ -n "$params" ]]; then
+        # 按 & 分割
         IFS='&' read -ra param_pairs <<< "$params"
         for pair in "${param_pairs[@]}"; do
             key="${pair%%=*}"
@@ -2324,17 +2339,19 @@ parse_hysteria2_link() {
         done
     fi
 
+    # 转换 insecure 为布尔值
     local insecure_bool="false"
     [[ "$insecure" == "1" || "$insecure" == "true" ]] && insecure_bool="true"
 
+    # 构建 tls 配置
     local tls_config="{
     \"enabled\": true,
     \"server_name\": \"${sni}\",
     \"insecure\": ${insecure_bool}
   }"
-    local objs_config=""
+    local obfs_config=""
     if [[ "$obfs_type" == "salamander" && -n "$obfs_password" ]]; then
-        objs_config=",
+        obfs_config=",
   \"obfs\": {
     \"type\": \"salamander\",
     \"password\": \"${obfs_password}\"
@@ -2348,7 +2365,7 @@ parse_hysteria2_link() {
   \"server\": \"${server}\",
   \"server_port\": ${port},
   \"password\": \"${password}\",
-  \"tls\": ${tls_config}${objs_config}
+  \"tls\": ${tls_config}${obfs_config}
 }"
 
     local relay_desc
