@@ -1896,7 +1896,7 @@ setup_anytls() {
 
         # 生成客户端 JSON 配置文件（sing-box 格式）
         CLIENT_JSON_PATH="${LINK_DIR}/anytls_reality_client_${PORT}.json"
-        cat > "${CLIENT_JSON_PATH}" << EOF
+       cat > "${CLIENT_JSON_PATH}" << EOF
 {
   "log": { "level": "info" },
   "inbounds": [
@@ -1904,7 +1904,7 @@ setup_anytls() {
       "type": "tun",
       "tag": "tun-in",
       "interface_name": "sing-box0",
-      "inet4_address": "172.19.0.1/30",
+      "address": ["172.19.0.1/30", "fd00::1/126"],
       "auto_route": true,
       "stack": "system"
     }
@@ -1931,10 +1931,6 @@ setup_anytls() {
     { "type": "block", "tag": "block" }
   ],
   "route": {
-    "rules": [
-      { "geosite": "cn", "outbound": "direct" },
-      { "geoip": "cn", "outbound": "direct" }
-    ],
     "final": "AnyTLS+REALITY",
     "auto_detect_interface": true
   }
