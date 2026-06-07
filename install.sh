@@ -1811,24 +1811,45 @@ setup_https() {
     save_links_to_files
 }
 
-# ==================== AnyTLS 配置（已修复混淆显示 + 随机填充 + UDP 提示） ====================
+# ==================== AnyTLS 配置（支持内嵌 REALITY） ====================
 setup_anytls() {
     echo ""
     read_port_with_check 443
-    
-    echo -e "${YELLOW}请输入SNI域名（建议使用常见HTTPS网站域名）${NC}"
+
+    echo -e "${YELLOW}是否启用 REALITY 伪装？(y/N)${NC}"
+    echo -e "${CYAN}启用后，客户端请使用 VLESS+REALITY 协议连接${NC}"
+    read -p "启用 REALITY? [y/N]: " ENABLE_REALITY
+    ENABLE_REALITY=${ENABLE_REALITY:-N}
+
+    echo -e "${YELLOW}请输入 SNI 域名（用于 TLS 证书及 REALITY handshake）${NC}"
     echo -e "${CYAN}例如: ${DEFAULT_SNI1}${NC}"
-    read -p "SNI域名 [${DEFAULT_SNI}]: " ANYTLS_SNI
+    read -p "SNI 域名 [${DEFAULT_SNI}]: " ANYTLS_SNI
     ANYTLS_SNI=${ANYTLS_SNI:-${DEFAULT_SNI}}
-    
-    # 是否启用填充混淆（修复：默认 Y，按回车也视为 Y）
-    read -p "是否启用随机填充混淆 (推荐)？[Y/n]: " ENABLE_PADDING
-    ENABLE_PADDING=${ENABLE_PADDING:-Y}
-    local padding_config=""
-    local padding_status="未启用"
-    # 修复：只要不是明确的 n/N，都视为启用
-    if [[ ! "$ENABLE_PADDING" =~ ^[Nn]$ ]]; then
-        padding_config="[
+
+    # 生成 AnyTLS 密码（如果还没有）
+    if [[ -z "$ANYTLS_PASSWORD" ]]; then
+        ANYTLS_PASSWORD=$(openssl rand -hex 16)
+        save_keys_to_file
+    fi
+
+    # 生成自签证书
+    gen_cert_for_sni "${ANYTLS_SNI}"
+
+    # 如果启用 REALITY，确保 REALITY 密钥对存在
+    if [[ "$ENABLE_REALITY" =~ ^[Yy]$ ]]; then
+        if [[ -z "$REALITY_PRIVATE" ]]; then
+            KEYS=$(${INSTALL_DIR}/sing-box generate reality-keypair 2>/dev/null)
+            REALITY_PRIVATE=$(echo "$KEYS" | grep "PrivateKey" | awk '{print $2}')
+            REALITY_PUBLIC=$(echo "$KEYS" | grep "PublicKey" | awk '{print $2}')
+            SHORT_ID=$(openssl rand -hex 8)
+            save_keys_to_file
+        fi
+        print_info "REALITY 公钥: ${REALITY_PUBLIC}"
+        print_info "Short ID: ${SHORT_ID}"
+    fi
+
+    # 构建 padding_scheme（默认启用随机填充）
+    local padding_config="[
     \"stop=8\",
     \"0=30-30\",
     \"1=100-400\",
@@ -1839,20 +1860,45 @@ setup_anytls() {
     \"6=500-1000\",
     \"7=500-1000\"
   ]"
-        padding_status="已启用 (官方默认)"
-        print_info "已启用随机填充混淆（官方默认策略）"
-    else
-        padding_config="[]"
-        print_info "未启用填充混淆（可能会被深度包检测识别）"
-    fi
-    
-    print_info "为 ${ANYTLS_SNI} 生成自签证书..."
-    gen_cert_for_sni "${ANYTLS_SNI}"
-    
-    print_info "生成配置文件..."
-    
+
     local listen_addr=$(get_listen_address)
-    local inbound="{
+    local inbound=""
+    local PROTO=""
+    local EXTRA_INFO=""
+    local LINK=""
+
+    if [[ "$ENABLE_REALITY" =~ ^[Yy]$ ]]; then
+        # AnyTLS + REALITY 组合入站（客户端使用 VLESS+REALITY）
+        inbound="{
+  \"type\": \"anytls\",
+  \"tag\": \"anytls-reality-${PORT}\",
+  \"listen\": \"${listen_addr}\",
+  \"listen_port\": ${PORT},
+  \"users\": [{\"password\": \"${ANYTLS_PASSWORD}\"}],
+  \"padding_scheme\": ${padding_config},
+  \"tls\": {
+    \"enabled\": true,
+    \"server_name\": \"${ANYTLS_SNI}\",
+    \"certificate_path\": \"${CERT_DIR}/${ANYTLS_SNI}/cert.pem\",
+    \"key_path\": \"${CERT_DIR}/${ANYTLS_SNI}/private.key\",
+    \"reality\": {
+      \"enabled\": true,
+      \"handshake\": {
+        \"server\": \"${ANYTLS_SNI}\",
+        \"server_port\": 443
+      },
+      \"private_key\": \"${REALITY_PRIVATE}\",
+      \"short_id\": [\"${SHORT_ID}\"]
+    }
+  }
+}"
+        PROTO="AnyTLS+REALITY"
+        EXTRA_INFO="密码: ${ANYTLS_PASSWORD}\n证书: 自签证书 (${ANYTLS_SNI})\nREALITY 公钥: ${REALITY_PUBLIC}\nShort ID: ${SHORT_ID}"
+        # 生成客户端 VLESS+REALITY 链接
+        LINK="vless://${UUID}@${SERVER_IP}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${ANYTLS_SNI}&fp=chrome&pbk=${REALITY_PUBLIC}&sid=${SHORT_ID}&type=tcp#AnyTLS+REALITY-${SERVER_IP}"
+    else
+        # 纯 AnyTLS 入站
+        inbound="{
   \"type\": \"anytls\",
   \"tag\": \"anytls-in-${PORT}\",
   \"listen\": \"${listen_addr}\",
@@ -1866,42 +1912,40 @@ setup_anytls() {
     \"key_path\": \"${CERT_DIR}/${ANYTLS_SNI}/private.key\"
   }
 }"
-    
+        PROTO="AnyTLS"
+        EXTRA_INFO="密码: ${ANYTLS_PASSWORD}\n证书: 自签证书 (${ANYTLS_SNI})"
+        # 生成客户端 AnyTLS 链接
+        LINK="anytls://${ANYTLS_PASSWORD}@${SERVER_IP}:${PORT}?security=tls&fp=chrome&insecure=1&sni=${ANYTLS_SNI}&type=tcp#AnyTLS-${SERVER_IP}"
+    fi
+
+    # 并入全局 inbound JSON
     if [[ -z "$INBOUNDS_JSON" ]]; then
         INBOUNDS_JSON="$inbound"
     else
         INBOUNDS_JSON="${INBOUNDS_JSON},${inbound}"
     fi
-    
-    PROTO="AnyTLS"
-    EXTRA_INFO="密码: ${ANYTLS_PASSWORD}\n自签证书: ${ANYTLS_SNI}\nSNI: ${ANYTLS_SNI}\n填充混淆: ${padding_status}"
-    EXTRA_INFO="${EXTRA_INFO}\n\n${GREEN}UDP 支持:${NC} AnyTLS 原生支持 UDP-over-TCP，请在客户端开启 UDP 转发即可使用。"
-    
-    # 保存新添加节点的链接（只用于显示）
-    CURRENT_NEW_LINKS=""
-    
-    # IPv4 链接
-    local link_ipv4="anytls://${ANYTLS_PASSWORD}@${SERVER_IP}:${PORT}?security=tls&fp=chrome&insecure=1&sni=${ANYTLS_SNI}&type=tcp#AnyTLS-${SERVER_IP}"
-    add_link "$link_ipv4" "AnyTLS" "$EXTRA_INFO" "${SERVER_IP}" "${PORT}" "${ANYTLS_SNI}"
-    LINK="$link_ipv4"  # 默认链接
-    
-    # 添加到新链接显示
-    CURRENT_NEW_LINKS="${CURRENT_NEW_LINKS}[AnyTLS] ${SERVER_IP}:${PORT} (SNI: ${ANYTLS_SNI})\n${link_ipv4}\n----------------------------------------\n\n"
-    
-    # IPv6 链接（如果有）
-    if [[ -n "${SERVER_IPV6}" ]]; then
-        local link_ipv6="anytls://${ANYTLS_PASSWORD}@[${SERVER_IPV6}]:${PORT}?security=tls&fp=chrome&insecure=1&sni=${ANYTLS_SNI}&type=tcp#AnyTLS-[${SERVER_IPV6}]"
-        add_link "$link_ipv6" "AnyTLS" "$EXTRA_INFO" "[${SERVER_IPV6}]" "${PORT}" "${ANYTLS_SNI}"
-        CURRENT_NEW_LINKS="${CURRENT_NEW_LINKS}[AnyTLS] [${SERVER_IPV6}]:${PORT} (SNI: ${ANYTLS_SNI})\n${link_ipv6}\n----------------------------------------\n\n"
-    fi
-    
-    INBOUND_TAGS+=("anytls-in-${PORT}")
+
+    # 记录节点信息
+    INBOUND_TAGS+=("anytls-${PORT}")
     INBOUND_PORTS+=("${PORT}")
     INBOUND_PROTOS+=("${PROTO}")
     INBOUND_SNIS+=("${ANYTLS_SNI}")
     INBOUND_RELAY_TAGS+=("direct")
-    
-    print_success "AnyTLS 配置完成 (SNI: ${ANYTLS_SNI}, 填充混淆: ${padding_status})"
+
+    # 显示新添加节点的链接（用于 show_result）
+    CURRENT_NEW_LINKS=""
+    CURRENT_NEW_LINKS="${CURRENT_NEW_LINKS}[${PROTO}] ${SERVER_IP}:${PORT} (SNI: ${ANYTLS_SNI})\n${LINK}\n----------------------------------------\n\n"
+
+    # 保存到全局链接变量（供 later save_links_to_files 使用）
+    # 注意：add_link 函数需要 proto 参数，这里直接调用 add_link 更规范
+    # 但为了避免重复，我们直接调用 add_link 函数保存
+    if [[ "$ENABLE_REALITY" =~ ^[Yy]$ ]]; then
+        add_link "$LINK" "AnyTLS+REALITY" "$EXTRA_INFO" "${SERVER_IP}" "${PORT}" "${ANYTLS_SNI}"
+    else
+        add_link "$LINK" "AnyTLS" "$EXTRA_INFO" "${SERVER_IP}" "${PORT}" "${ANYTLS_SNI}"
+    fi
+
+    print_success "AnyTLS 节点添加完成 (REALITY: ${ENABLE_REALITY})"
     save_links_to_files
 }
 # ==================== 中转链接解析 ====================
