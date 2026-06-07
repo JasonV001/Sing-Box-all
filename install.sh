@@ -2288,11 +2288,12 @@ parse_trojan_link() {
     save_relays_to_file
     print_success "Trojan 中转已添加: ${relay_desc}"
 }
+
 parse_hysteria2_link() {
     local link="$1"
     local custom_desc="$2"
-    # 格式: hysteria2://password@server:port?insecure=1&sni=example.com&obfs=salamander&obfs-password=xxx
-    local data=$(echo "$link" | sed 's|hysteria2://||')
+    # 兼容 hy2:// 和 hysteria2:// 前缀
+    local data=$(echo "$link" | sed -E 's|^(hy2|hysteria2)://||')
     local userinfo=$(echo "$data" | cut -d'@' -f1)
     local server_port_params=$(echo "$data" | cut -d'@' -f2)
     local server=$(echo "$server_port_params" | cut -d':' -f1)
@@ -2324,7 +2325,7 @@ parse_hysteria2_link() {
         done
     fi
 
-    # 构建 tls 配置（Hysteria2 强制 TLS）
+    # 构建 tls 配置
     local tls_config="{
     \"enabled\": true,
     \"server_name\": \"${sni}\",
