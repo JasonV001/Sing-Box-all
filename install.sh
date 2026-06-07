@@ -1811,7 +1811,7 @@ setup_https() {
     save_links_to_files
 }
 
-# ==================== AnyTLS 配置（支持内嵌 REALITY） ====================
+# ==================== AnyTLS 配置（支持内嵌 REALITY，修正版） ====================
 setup_anytls() {
     echo ""
     read_port_with_check 443
@@ -1846,7 +1846,17 @@ setup_anytls() {
     else
         # 纯 AnyTLS 需要自签证书
         gen_cert_for_sni "${ANYTLS_SNI}"
+        # 询问是否允许不安全连接
+        echo -e "${YELLOW}是否允许跳过证书验证（insecure）？${NC}"
+        echo -e "${CYAN}允许可以简化客户端配置，但会降低安全性（中间人攻击风险）${NC}"
+        read -p "允许 insecure? [y/N]: " ALLOW_INSECURE
+        ALLOW_INSECURE=${ALLOW_INSECURE:-N}
     fi
+
+    # 询问 uTLS 指纹（可选）
+    echo -e "${YELLOW}请输入 uTLS 指纹（默认 chrome，可选: firefox, safari, ios, android）${NC}"
+    read -p "指纹 [chrome]: " UTLS_FINGERPRINT
+    UTLS_FINGERPRINT=${UTLS_FINGERPRINT:-chrome}
 
     # 构建 padding_scheme（默认启用随机填充）
     local padding_config="[
@@ -1894,9 +1904,13 @@ setup_anytls() {
         PROTO="AnyTLS+REALITY"
         EXTRA_INFO="密码: ${ANYTLS_PASSWORD}\nREALITY 公钥: ${REALITY_PUBLIC}\nShort ID: ${SHORT_ID}\nSNI: ${ANYTLS_SNI}"
 
-        # 生成客户端 JSON 配置文件（sing-box 格式）
+        # 生成客户端 JSON 配置文件（sing-box 格式），并根据系统选择 TUN 栈
+        local tun_stack="system"
+        if [[ "$OSTYPE" == "darwin"* ]] || [[ "$OSTYPE" == "msys"* ]] || [[ "$OSTYPE" == "cygwin"* ]]; then
+            tun_stack="gvisor"
+        fi
         CLIENT_JSON_PATH="${LINK_DIR}/anytls_reality_client_${PORT}.json"
-       cat > "${CLIENT_JSON_PATH}" << EOF
+        cat > "${CLIENT_JSON_PATH}" << EOF
 {
   "log": { "level": "info" },
   "inbounds": [
@@ -1906,7 +1920,7 @@ setup_anytls() {
       "interface_name": "sing-box0",
       "address": ["172.19.0.1/30", "fd00::1/126"],
       "auto_route": true,
-      "stack": "system"
+      "stack": "${tun_stack}"
     }
   ],
   "outbounds": [
@@ -1919,7 +1933,7 @@ setup_anytls() {
       "tls": {
         "enabled": true,
         "server_name": "${ANYTLS_SNI}",
-        "utls": { "enabled": true, "fingerprint": "chrome" },
+        "utls": { "enabled": true, "fingerprint": "${UTLS_FINGERPRINT}" },
         "reality": {
           "enabled": true,
           "public_key": "${REALITY_PUBLIC}",
@@ -1937,10 +1951,13 @@ setup_anytls() {
 }
 EOF
         chmod 644 "${CLIENT_JSON_PATH}"
-        # 不生成 anytls:// 链接，而是显示 JSON 路径
         LINK="请使用 sing-box 客户端，配置文件已保存到: ${CLIENT_JSON_PATH}"
     else
         # 纯 AnyTLS 入站（需要证书）
+        local insecure_bool="false"
+        if [[ "$ALLOW_INSECURE" =~ ^[Yy]$ ]]; then
+            insecure_bool="true"
+        fi
         inbound="{
   \"type\": \"anytls\",
   \"tag\": \"anytls-in-${PORT}\",
@@ -1957,7 +1974,8 @@ EOF
 }"
         PROTO="AnyTLS"
         EXTRA_INFO="密码: ${ANYTLS_PASSWORD}\n证书: 自签证书 (${ANYTLS_SNI})"
-        LINK="anytls://${ANYTLS_PASSWORD}@${SERVER_IP}:${PORT}?security=tls&fp=chrome&insecure=1&sni=${ANYTLS_SNI}&type=tcp#AnyTLS-${SERVER_IP}"
+        # 生成 anytls:// 链接，insecure 根据用户选择
+        LINK="anytls://${ANYTLS_PASSWORD}@${SERVER_IP}:${PORT}?security=tls&fp=${UTLS_FINGERPRINT}&insecure=${insecure_bool}&sni=${ANYTLS_SNI}&type=tcp#AnyTLS-${SERVER_IP}"
     fi
 
     # 并入全局 inbound JSON
@@ -1974,12 +1992,11 @@ EOF
     INBOUND_SNIS+=("${ANYTLS_SNI}")
     INBOUND_RELAY_TAGS+=("direct")
 
-    # 显示新添加节点的信息
+    # 显示新添加节点的信息（不再调用 add_link 传入无效链接）
     CURRENT_NEW_LINKS=""
     if [[ "$ENABLE_REALITY" =~ ^[Yy]$ ]]; then
-        CURRENT_NEW_LINKS="${CURRENT_NEW_LINKS}[${PROTO}] ${SERVER_IP}:${PORT} (SNI: ${ANYTLS_SNI})\n${LINK}\n----------------------------------------\n\n"
-        # 调用 add_link 保存到 all.txt 等，但这里 LINK 是文本，不实际作为分享链接，所以只记录信息
-        add_link "${SERVER_IP}:${PORT} (AnyTLS+REALITY)" "${PROTO}" "$EXTRA_INFO" "${SERVER_IP}" "${PORT}" "${ANYTLS_SNI}"
+        CURRENT_NEW_LINKS="${CURRENT_NEW_LINKS}[${PROTO}] ${SERVER_IP}:${PORT} (SNI: ${ANYTLS_SNI})\n客户端配置文件: ${CLIENT_JSON_PATH}\n----------------------------------------\n\n"
+        # 不调用 add_link，因为 JSON 不是标准 URI
     else
         CURRENT_NEW_LINKS="${CURRENT_NEW_LINKS}[${PROTO}] ${SERVER_IP}:${PORT} (SNI: ${ANYTLS_SNI})\n${LINK}\n----------------------------------------\n\n"
         add_link "$LINK" "${PROTO}" "$EXTRA_INFO" "${SERVER_IP}" "${PORT}" "${ANYTLS_SNI}"
