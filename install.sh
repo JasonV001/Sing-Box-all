@@ -2532,6 +2532,10 @@ setup_relay() {
                         parse_vless_link "$RELAY_LINK" "$custom_desc"
                     elif [[ "$RELAY_LINK" =~ ^trojan:// ]]; then
                         parse_trojan_link "$RELAY_LINK" "$custom_desc"
+                    elif [[ "$RELAY_LINK" =~ ^hysteria2:// ]]; then
+                        parse_hysteria2_link "$RELAY_LINK" "$custom_desc"
+                    elif [[ "$RELAY_LINK" =~ ^anytls:// ]]; then
+                        parse_anytls_link "$RELAY_LINK"
                     else
                         print_error "不支持的链接格式"
                     fi
