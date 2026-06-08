@@ -3215,18 +3215,18 @@ generate_config() {
 
     load_relays_from_file
 
-    # ---------- 根据 OUTBOUND_IP_MODE 设置 domain_strategy (优先模式) ----------
+    # ---------- 根据 OUTBOUND_IP_MODE 设置 domain_strategy (新版规范) ----------
     local domain_strategy=""
     case "$OUTBOUND_IP_MODE" in
-        "ipv4") domain_strategy="prefer_ipv4" ;;
-        "ipv6") domain_strategy="prefer_ipv6" ;;
-        "dual") domain_strategy="" ;;
+        "ipv4") domain_strategy="ipv4_preferred" ;;   # 优先 IPv4，回退 IPv6
+        "ipv6") domain_strategy="ipv6_preferred" ;;   # 优先 IPv6，回退 IPv4
+        "dual") domain_strategy="" ;;                 # 不干预，系统自动选择
     esac
 
     # ---------- 构建 outbounds 数组 ----------
     local outbounds_array=()
 
-    # 处理所有中转 outbound (为每个添加 domain_strategy)
+    # 处理所有中转 outbound (添加 domain_strategy)
     for relay_json in "${RELAY_JSONS[@]}"; do
         if [[ -n "$domain_strategy" ]]; then
             # 使用 jq 安全添加字段
@@ -3260,7 +3260,6 @@ generate_config() {
         IFS='|' read -r inbound_tag match_type match_value relay_tag desc <<< "$route"
         [[ -z "$inbound_tag" || -z "$match_type" || -z "$match_value" || -z "$relay_tag" ]] && continue
 
-        # 检查中转是否存在
         local relay_exists=0
         for rt in "${RELAY_TAGS[@]}"; do
             if [[ "$rt" == "$relay_tag" ]]; then
@@ -3322,44 +3321,20 @@ generate_config() {
         route_json="{\"final\":\"direct\",\"default_domain_resolver\":\"local\"}"
     fi
 
-    # ---------- DNS 配置 (根据出站模式设置 strategy) ----------
-    local dns_json
-    if [[ "$OUTBOUND_IP_MODE" == "ipv6" ]]; then
-        dns_json='{
-    "servers": [
-      {"tag": "local", "type": "local"},
-      {"tag": "remote", "type": "udp", "server": "8.8.8.8"}
-    ],
-    "final": "remote",
-    "strategy": "prefer_ipv6"
-  }'
-    elif [[ "$OUTBOUND_IP_MODE" == "dual" ]]; then
-        dns_json='{
-    "servers": [
-      {"tag": "local", "type": "local"},
-      {"tag": "remote", "type": "udp", "server": "8.8.8.8"}
-    ],
-    "final": "remote"
-  }'
-    else
-        dns_json='{
-    "servers": [
-      {"tag": "local", "type": "local"},
-      {"tag": "remote", "type": "udp", "server": "8.8.8.8"}
-    ],
-    "final": "remote",
-    "strategy": "prefer_ipv4"
-  }'
-    fi
-
-    # ---------- 写入最终配置文件 ----------
+    # ---------- DNS 配置 (移除 strategy 字段，完全符合新版规范) ----------
     cat > ${CONFIG_FILE} << EOFCONFIG
 {
   "log": {
     "level": "info",
     "timestamp": true
   },
-  "dns": ${dns_json},
+  "dns": {
+    "servers": [
+      {"tag": "local", "type": "local"},
+      {"tag": "remote", "type": "udp", "server": "8.8.8.8"}
+    ],
+    "final": "remote"
+  },
   "inbounds": [${INBOUNDS_JSON}],
   "outbounds": ${outbounds},
   "route": ${route_json}
