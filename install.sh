@@ -3216,64 +3216,42 @@ generate_config() {
     # 加载中转配置
     load_relays_from_file
 
-    # ---------- 1. 定义专用 DNS 服务器（用于 IPv4 优先 / IPv6 优先） ----------
-    local dns_server_extra=""
-    local domain_resolver_tag=""
-    case "$OUTBOUND_IP_MODE" in
-        "ipv4")
-            domain_resolver_tag="dns-prefer-ipv4"
-            dns_server_extra=', {
-  "tag": "dns-prefer-ipv4",
-  "address": "https://1.1.1.1/dns-query",
-  "strategy": "prefer_ipv4"
-}'
-            ;;
-        "ipv6")
-            domain_resolver_tag="dns-prefer-ipv6"
-            dns_server_extra=', {
-  "tag": "dns-prefer-ipv6",
-  "address": "https://[2606:4700:4700::1111]/dns-query",
-  "strategy": "prefer_ipv6"
-}'
-            ;;
-        "dual")
-            domain_resolver_tag=""
-            dns_server_extra=""
-            ;;
-    esac
+    # ================== 新版配置生成 ==================
 
-    # ---------- 2. 构建 outbounds 数组（为每个出站添加 domain_resolver） ----------
+    # --- 1. 定义 DNS 服务器（完全新格式，无任何 deprecated 警告）---
+    local dns_servers_json='[
+      {
+        "tag": "remote",
+        "address": "8.8.8.8"
+      }
+    ]'
+    
+    # 默认出站策略，直连走 IPv6 优先
+    local direct_outbound='{
+      "type": "direct",
+      "tag": "direct",
+      "domain_strategy": "prefer_ipv6"
+    }'
+
+    # 处理中转 outbound（可选：是否给中转也加上 IPv6 优先策略）
+    # 这里默认不给中转加，因为它们通常走的是 IP 直连
     local outbounds_array=()
-
-    # 处理所有中转 outbound
     for relay_json in "${RELAY_JSONS[@]}"; do
-        if [[ -n "$domain_resolver_tag" ]]; then
-            # 使用 jq 安全添加 domain_resolver 字段
-            local modified_json=$(echo "$relay_json" | jq --arg dr "$domain_resolver_tag" '. + {domain_resolver: $dr}')
-            outbounds_array+=("$modified_json")
-        else
-            outbounds_array+=("$relay_json")
-        fi
+        outbounds_array+=("$relay_json")
     done
-
-    # 处理 direct outbound
-    local direct_outbound='{"type": "direct", "tag": "direct", "tcp_fast_open": false'
-    if [[ -n "$domain_resolver_tag" ]]; then
-        direct_outbound+=', "domain_resolver": "'"${domain_resolver_tag}"'"'
-    fi
-    direct_outbound+='}'
     outbounds_array+=("$direct_outbound")
 
-    # 将 outbounds 数组转换为 JSON 字符串
+    # 使用 jq 将数组转换为正确的 JSON 字符串
     local outbounds=$(printf "%s\n" "${outbounds_array[@]}" | jq -s '.')
 
-    # ---------- 3. 加载分流规则 ----------
+    # --- 2. 加载分流规则 ---
     load_domain_routes_from_file
 
-    # ---------- 4. 构建路由规则（保持原有逻辑，不做改动） ----------
+    # --- 3. 构建路由规则（保持不变）---
     local route_rules=()
     local has_relay=0
 
+    # 分流域名规则...
     for route in "${DOMAIN_ROUTES[@]}"; do
         IFS='|' read -r inbound_tag match_type match_value relay_tag desc <<< "$route"
         [[ -z "$inbound_tag" || -z "$match_type" || -z "$match_value" || -z "$relay_tag" ]] && continue
@@ -3303,6 +3281,7 @@ generate_config() {
         has_relay=1
     done
 
+    # 节点默认路由...
     for i in "${!INBOUND_TAGS[@]}"; do
         local inbound_tag="${INBOUND_TAGS[$i]}"
         local relay_tag="${INBOUND_RELAY_TAGS[$i]}"
@@ -3325,6 +3304,7 @@ generate_config() {
         fi
     done
 
+    # 组合路由配置
     local route_json
     if [[ $has_relay -eq 1 ]]; then
         route_json="{\"rules\":["
@@ -3332,12 +3312,12 @@ generate_config() {
             [[ $i -gt 0 ]] && route_json+=","
             route_json+="${route_rules[$i]}"
         done
-        route_json+="],\"final\":\"direct\",\"default_domain_resolver\":\"local\"}"
+        route_json+="],\"final\":\"direct\"}"
     else
-        route_json="{\"final\":\"direct\",\"default_domain_resolver\":\"local\"}"
+        route_json="{\"final\":\"direct\"}"
     fi
 
-    # ---------- 5. 基础 DNS 配置（移除了全局 strategy，不再有废弃警告） ----------
+    # --- 4. 写入最终配置文件 ---
     cat > ${CONFIG_FILE} << EOFCONFIG
 {
   "log": {
@@ -3345,16 +3325,7 @@ generate_config() {
     "timestamp": true
   },
   "dns": {
-    "servers": [
-      {
-        "tag": "local",
-        "address": "local"
-      },
-      {
-        "tag": "remote",
-        "address": "udp://8.8.8.8"
-      }$dns_server_extra
-    ],
+    "servers": ${dns_servers_json},
     "final": "remote"
   },
   "inbounds": [${INBOUNDS_JSON}],
