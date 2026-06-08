@@ -42,7 +42,7 @@ ANYTLS_LINKS=""
 # IP 配置
 SERVER_IPV6=""
 INBOUND_IP_MODE="dual"   # ipv4, ipv6 或 dual，控制入站监听地址（默认双栈）
-OUTBOUND_IP_MODE="dual"  # ipv4, ipv6 或 dual，控制出站连接（默认双栈）
+OUTBOUND_IP_MODE="dual"  # ipv4, ipv6, ipv6_only 或 dual，控制出站连接（默认双栈）
 IP_CONFIG_FILE="/etc/sing-box/ip_config.conf"
 
 # 中转配置数组
@@ -828,7 +828,7 @@ regenerate_links_from_config() {
                         cat > "${client_config_file_ipv4}" << EOFCLIENT
 {
   "log": {"level": "info"},
-  "dns": {"servers": [{"tag": "google", "address": "8.8.8.8"}]},
+  "dns": {"servers": [{"tag": "google", "type": "udp", "server": "8.8.8.8"}]},
   "inbounds": [
     {
       "type": "mixed",
@@ -890,7 +890,7 @@ EOFCLIENT
                             cat > "${client_config_file_ipv6}" << EOFCLIENT
 {
   "log": {"level": "info"},
-  "dns": {"servers": [{"tag": "google", "address": "8.8.8.8"}]},
+  "dns": {"servers": [{"tag": "google", "type": "udp", "server": "8.8.8.8"}]},
   "inbounds": [
     {
       "type": "mixed",
@@ -1572,7 +1572,8 @@ setup_shadowtls() {
     "servers": [
       {
         "tag": "google",
-        "address": "8.8.8.8"
+        "type": "udp",
+        "server": "8.8.8.8"
       }
     ]
   },
@@ -1660,7 +1661,8 @@ EOFCLIENT
     "servers": [
       {
         "tag": "google",
-        "address": "8.8.8.8"
+        "type": "udp",
+        "server": "8.8.8.8"
       }
     ]
   },
@@ -2866,13 +2868,14 @@ ip_config_menu() {
         echo -e "  ${GREEN}[2]${NC} 设置入站为 IPv6"
         echo -e "  ${GREEN}[3]${NC} 设置入站为双栈 (IPv4+IPv6)"
         echo -e "  ${GREEN}[4]${NC} 设置出站为 IPv4"
-        echo -e "  ${GREEN}[5]${NC} 设置出站为 IPv6"
-        echo -e "  ${GREEN}[6]${NC} 设置出站为双栈 (IPv4+IPv6)"
-        echo -e "  ${GREEN}[7]${NC} 手动修改 IPv4 地址"
-        echo -e "  ${GREEN}[8]${NC} 手动修改 IPv6 地址"
+        echo -e "  ${GREEN}[5]${NC} 设置出站为 IPv6 (优先)"
+        echo -e "  ${GREEN}[6]${NC} 设置出站为仅 IPv6 (IPv4不出站)"
+        echo -e "  ${GREEN}[7]${NC} 设置出站为双栈 (IPv4+IPv6)"
+        echo -e "  ${GREEN}[8]${NC} 手动修改 IPv4 地址"
+        echo -e "  ${GREEN}[9]${NC} 手动修改 IPv6 地址"
         echo -e "  ${GREEN}[0]${NC} 返回主菜单"
         echo ""
-        read -p "请选择 [0-8]: " ip_choice
+        read -p "请选择 [0-9]: " ip_choice
         
         case $ip_choice in
             1)
@@ -2929,7 +2932,8 @@ ip_config_menu() {
                 fi
                 OUTBOUND_IP_MODE="ipv6"
                 save_ip_config
-                print_success "出站已设置为 IPv6"
+                print_success "出站已设置为 IPv6 优先"
+                echo -e "${YELLOW}提示: IPv6 优先出站，IPv6 不可用时回退到 IPv4${NC}"
                 echo -e "${YELLOW}提示: 需要重新生成配置才能生效${NC}"
                 read -p "是否立即重新生成配置? (y/N): " regen
                 if [[ "$regen" =~ ^[Yy]$ ]] && [[ -n "$INBOUNDS_JSON" ]]; then
@@ -2937,6 +2941,22 @@ ip_config_menu() {
                 fi
                 ;;
             6)
+                if [[ -z "$SERVER_IPV6" ]]; then
+                    print_error "未检测到 IPv6 地址，请先手动设置"
+                    read -p "按回车继续..." _
+                    continue
+                fi
+                OUTBOUND_IP_MODE="ipv6_only"
+                save_ip_config
+                print_success "出站已设置为仅 IPv6"
+                echo -e "${YELLOW}提示: 仅使用 IPv6 出站，IPv4 将无法出站${NC}"
+                echo -e "${YELLOW}提示: 需要重新生成配置才能生效${NC}"
+                read -p "是否立即重新生成配置? (y/N): " regen
+                if [[ "$regen" =~ ^[Yy]$ ]] && [[ -n "$INBOUNDS_JSON" ]]; then
+                    generate_config && start_svc
+                fi
+                ;;
+            7)
                 OUTBOUND_IP_MODE="dual"
                 save_ip_config
                 print_success "出站已设置为双栈 (IPv4+IPv6)"
@@ -2947,7 +2967,7 @@ ip_config_menu() {
                     generate_config && start_svc
                 fi
                 ;;
-            7)
+            8)
                 read -p "请输入 IPv4 地址: " new_ipv4
                 if [[ -n "$new_ipv4" ]]; then
                     SERVER_IP="$new_ipv4"
@@ -2956,7 +2976,7 @@ ip_config_menu() {
                     echo -e "${YELLOW}提示: 需要重新生成链接文件${NC}"
                 fi
                 ;;
-            8)
+            9)
                 read -p "请输入 IPv6 地址: " new_ipv6
                 if [[ -n "$new_ipv6" ]]; then
                     SERVER_IPV6="$new_ipv6"
@@ -3143,6 +3163,7 @@ delete_all_nodes() {
     # 根据出站模式设置 DNS 策略
     local dns_strategy="prefer_ipv4"
     [[ "$OUTBOUND_IP_MODE" == "ipv6" ]] && dns_strategy="prefer_ipv6"
+    [[ "$OUTBOUND_IP_MODE" == "ipv6_only" ]] && dns_strategy="ipv6_only"
     
     cat > ${CONFIG_FILE} << EOFCONFIG
 {
@@ -3154,11 +3175,12 @@ delete_all_nodes() {
     "servers": [
       {
         "tag": "local",
-        "address": "local"
+        "type": "local"
       },
       {
         "tag": "remote",
-        "address": "8.8.8.8"
+        "type": "udp",
+        "server": "8.8.8.8"
       }
     ],
     "final": "remote",
@@ -3212,50 +3234,43 @@ generate_config() {
         print_error "未找到任何入站节点，请先添加节点"
         return 1
     fi
-
+    
     # 加载中转配置
     load_relays_from_file
-
-    # ================== 新版配置生成 ==================
-
-    # --- 1. 定义 DNS 服务器（完全新格式，无任何 deprecated 警告）---
-    local dns_servers_json='[
-      {
-        "tag": "remote",
-        "address": "8.8.8.8"
-      }
-    ]'
     
-    # 默认出站策略，直连走 IPv6 优先
-    local direct_outbound='{
-      "type": "direct",
-      "tag": "direct",
-      "domain_strategy": "prefer_ipv6"
-    }'
-
-    # 处理中转 outbound（可选：是否给中转也加上 IPv6 优先策略）
-    # 这里默认不给中转加，因为它们通常走的是 IP 直连
+    # 构建 outbounds 数组
     local outbounds_array=()
+    
+    # 添加所有中转 outbound
     for relay_json in "${RELAY_JSONS[@]}"; do
         outbounds_array+=("$relay_json")
     done
+    
+    # 添加 direct outbound
+    local direct_outbound='{"type": "direct", "tag": "direct", "tcp_fast_open": false}'
     outbounds_array+=("$direct_outbound")
-
-    # 使用 jq 将数组转换为正确的 JSON 字符串
-    local outbounds=$(printf "%s\n" "${outbounds_array[@]}" | jq -s '.')
-
-    # --- 2. 加载分流规则 ---
+    
+    # 组合 outbounds
+    local outbounds="["
+    for i in "${!outbounds_array[@]}"; do
+        [[ $i -gt 0 ]] && outbounds+=", "
+        outbounds+="${outbounds_array[$i]}"
+    done
+    outbounds+="]"
+    
+    # 加载分流规则
     load_domain_routes_from_file
-
-    # --- 3. 构建路由规则（保持不变）---
+    
+    # 构建路由规则
     local route_rules=()
     local has_relay=0
-
-    # 分流域名规则...
+    
+    # 1. 首先添加所有分流域名规则（无论节点默认是中转还是直连）
     for route in "${DOMAIN_ROUTES[@]}"; do
         IFS='|' read -r inbound_tag match_type match_value relay_tag desc <<< "$route"
         [[ -z "$inbound_tag" || -z "$match_type" || -z "$match_value" || -z "$relay_tag" ]] && continue
-
+        
+        # 检查中转是否存在
         local relay_exists=0
         for rt in "${RELAY_TAGS[@]}"; do
             if [[ "$rt" == "$relay_tag" ]]; then
@@ -3267,26 +3282,39 @@ generate_config() {
             print_warning "分流规则引用的中转 ${relay_tag} 不存在，跳过规则: ${match_type}=${match_value}"
             continue
         fi
-
+        
+        # 根据匹配类型生成对应的 sing-box 规则
         local rule_part=""
         case "$match_type" in
-            domain_suffix)   rule_part="\"domain_suffix\":[\"${match_value}\"]" ;;
-            domain)          rule_part="\"domain\":[\"${match_value}\"]" ;;
-            domain_keyword)  rule_part="\"domain_keyword\":[\"${match_value}\"]" ;;
-            ip_cidr)         rule_part="\"ip_cidr\":[\"${match_value}\"]" ;;
-            *) continue ;;
+            domain_suffix)
+                rule_part="\"domain_suffix\":[\"${match_value}\"]"
+                ;;
+            domain)
+                rule_part="\"domain\":[\"${match_value}\"]"
+                ;;
+            domain_keyword)
+                rule_part="\"domain_keyword\":[\"${match_value}\"]"
+                ;;
+            ip_cidr)
+                rule_part="\"ip_cidr\":[\"${match_value}\"]"
+                ;;
+            *)
+                continue
+                ;;
         esac
-
+        
         route_rules+=("{\"inbound\":[\"${inbound_tag}\"],${rule_part},\"outbound\":\"${relay_tag}\"}")
         has_relay=1
     done
-
-    # 节点默认路由...
+    
+    # 2. 为每个节点添加默认路由（仅当节点配置了中转且不是 direct）
     for i in "${!INBOUND_TAGS[@]}"; do
         local inbound_tag="${INBOUND_TAGS[$i]}"
         local relay_tag="${INBOUND_RELAY_TAGS[$i]}"
-
+        
+        # 如果节点配置了具体的中转（非 direct），则添加兜底规则
         if [[ "$relay_tag" != "direct" ]]; then
+            # 检查中转是否存在
             local relay_exists=0
             for rt in "${RELAY_TAGS[@]}"; do
                 if [[ "$rt" == "$relay_tag" ]]; then
@@ -3303,7 +3331,7 @@ generate_config() {
             has_relay=1
         fi
     done
-
+    
     # 组合路由配置
     local route_json
     if [[ $has_relay -eq 1 ]]; then
@@ -3312,28 +3340,92 @@ generate_config() {
             [[ $i -gt 0 ]] && route_json+=","
             route_json+="${route_rules[$i]}"
         done
-        route_json+="],\"final\":\"direct\"}"
+        route_json+="],\"final\":\"direct\",\"default_domain_resolver\":\"local\"}"
     else
-        route_json="{\"final\":\"direct\"}"
+        route_json="{\"final\":\"direct\",\"default_domain_resolver\":\"local\"}"
     fi
-
-    # --- 4. 写入最终配置文件 ---
+    
+    # 构建 DNS 配置（根据出站 IP 模式）
+    local dns_json
+    if [[ "$OUTBOUND_IP_MODE" == "ipv6_only" ]]; then
+        dns_json='{
+    "servers": [
+      {
+        "tag": "local",
+        "type": "local"
+      },
+      {
+        "tag": "remote",
+        "type": "udp",
+        "server": "8.8.8.8"
+      }
+    ],
+    "final": "remote",
+    "strategy": "ipv6_only"
+  }'
+    elif [[ "$OUTBOUND_IP_MODE" == "ipv6" ]]; then
+        dns_json='{
+    "servers": [
+      {
+        "tag": "local",
+        "type": "local"
+      },
+      {
+        "tag": "remote",
+        "type": "udp",
+        "server": "8.8.8.8"
+      }
+    ],
+    "final": "remote",
+    "strategy": "prefer_ipv6"
+  }'
+    elif [[ "$OUTBOUND_IP_MODE" == "dual" ]]; then
+        dns_json='{
+    "servers": [
+      {
+        "tag": "local",
+        "type": "local"
+      },
+      {
+        "tag": "remote",
+        "type": "udp",
+        "server": "8.8.8.8"
+      }
+    ],
+    "final": "remote",
+    "strategy": "prefer_ipv4"
+  }'
+    else
+        dns_json='{
+    "servers": [
+      {
+        "tag": "local",
+        "type": "local"
+      },
+      {
+        "tag": "remote",
+        "type": "udp",
+        "server": "8.8.8.8"
+      }
+    ],
+    "final": "remote",
+    "strategy": "prefer_ipv4"
+  }'
+    fi
+    
     cat > ${CONFIG_FILE} << EOFCONFIG
 {
   "log": {
     "level": "info",
     "timestamp": true
   },
-  "dns": {
-    "servers": ${dns_servers_json},
-    "final": "remote"
-  },
+  "dns": ${dns_json},
   "inbounds": [${INBOUNDS_JSON}],
   "outbounds": ${outbounds},
   "route": ${route_json}
 }
 EOFCONFIG
-
+    
     print_success "配置文件生成完成"
 }
 
