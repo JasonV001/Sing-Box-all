@@ -382,7 +382,6 @@ ExecStart=/usr/local/bin/sing-box run -c /etc/sing-box/config.json
 Restart=on-failure
 RestartSec=10s
 LimitNOFILE=infinity
-Environment=ENABLE_DEPRECATED_LEGACY_DNS_SERVERS=true
 
 [Install]
 WantedBy=multi-user.target
@@ -446,20 +445,10 @@ gen_keys() {
     REALITY_PRIVATE=$(echo "$KEYS" | grep "PrivateKey" | awk '{print $2}')
     REALITY_PUBLIC=$(echo "$KEYS" | grep "PublicKey" | awk '{print $2}')
     
-    # UUID 生成：优先使用 uuidgen（Alpine 需要 util-linux），否则用 /proc 伪文件
-    UUID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null)
-    
     # --- 增加 Short ID 自定义 ---
     SHORT_ID=$(openssl rand -hex 8)
     print_info "Reality Short ID 已自动生成: ${SHORT_ID}"
     print_info "如需修改 Short ID，可在添加节点时自定义"
-
-    HY2_PASSWORD=$(openssl rand -hex 16)
-    SS_PASSWORD=$(openssl rand -base64 16)
-    SHADOWTLS_PASSWORD=$(openssl rand -hex 16)
-    ANYTLS_PASSWORD=$(openssl rand -hex 16)
-    SOCKS_USER="user_$(openssl rand -hex 4)"
-    SOCKS_PASS=$(openssl rand -hex 16)
     
     save_keys_to_file
     
@@ -470,16 +459,9 @@ save_keys_to_file() {
     mkdir -p "$(dirname "${KEY_FILE}")"
     
     cat > "${KEY_FILE}" << EOF
-UUID="${UUID}"
 REALITY_PRIVATE="${REALITY_PRIVATE}"
 REALITY_PUBLIC="${REALITY_PUBLIC}"
 SHORT_ID="${SHORT_ID}"
-HY2_PASSWORD="${HY2_PASSWORD}"
-SS_PASSWORD="${SS_PASSWORD}"
-SHADOWTLS_PASSWORD="${SHADOWTLS_PASSWORD}"
-ANYTLS_PASSWORD="${ANYTLS_PASSWORD}"
-SOCKS_USER="${SOCKS_USER}"
-SOCKS_PASS="${SOCKS_PASS}"
 EOF
     
     chmod 600 "${KEY_FILE}"
@@ -498,6 +480,7 @@ save_links_to_files() {
     echo -en "${HTTPS_LINKS}" > "${HTTPS_LINKS_FILE}"
     echo -en "${ANYTLS_LINKS}" > "${ANYTLS_LINKS_FILE}"
     
+    chmod 600 "${LINK_DIR}"/*.txt 2>/dev/null || true
     chmod 700 "${LINK_DIR}" 2>/dev/null || true
     print_success "链接已保存到 ${LINK_DIR}"
 }
@@ -650,9 +633,25 @@ regenerate_links_from_config() {
     HTTPS_LINKS=""
     ANYTLS_LINKS=""
     
-    # 加载密钥文件
+    # 加载密钥文件（安全读取，避免代码注入）
     if [[ -f "${KEY_FILE}" ]]; then
-        source "${KEY_FILE}"
+        while IFS='=' read -r key value; do
+            [[ "$key" =~ ^#.*$ || -z "$key" ]] && continue
+            value="${value#\"}"
+            value="${value%\"}"
+            case "$key" in
+                UUID) UUID="$value" ;;
+                REALITY_PRIVATE) REALITY_PRIVATE="$value" ;;
+                REALITY_PUBLIC) REALITY_PUBLIC="$value" ;;
+                SHORT_ID) SHORT_ID="$value" ;;
+                HY2_PASSWORD) HY2_PASSWORD="$value" ;;
+                SS_PASSWORD) SS_PASSWORD="$value" ;;
+                SHADOWTLS_PASSWORD) SHADOWTLS_PASSWORD="$value" ;;
+                ANYTLS_PASSWORD) ANYTLS_PASSWORD="$value" ;;
+                SOCKS_USER) SOCKS_USER="$value" ;;
+                SOCKS_PASS) SOCKS_PASS="$value" ;;
+            esac
+        done < "${KEY_FILE}"
     fi
     
     # 确保 SERVER_IP 已设置
@@ -1026,6 +1025,8 @@ EOF
 load_ip_config() {
     if [[ -f "${IP_CONFIG_FILE}" ]] && [[ -r "${IP_CONFIG_FILE}" ]]; then
         while IFS='=' read -r key value; do
+            # 跳过注释和空行
+            [[ "$key" =~ ^#.*$ || -z "$key" ]] && continue
             # 去除值两端的引号
             value="${value#\"}"
             value="${value%\"}"
@@ -1191,11 +1192,11 @@ get_ip() {
             print_success "使用 IPv4: ${SERVER_IP}"
         fi
     elif [[ -n "$ipv6" ]]; then
-        SERVER_IP="$ipv6"
-        SERVER_IPV6=""
-        [[ -z "$INBOUND_IP_MODE" ]] && INBOUND_IP_MODE="ipv6"
-        [[ -z "$OUTBOUND_IP_MODE" ]] && OUTBOUND_IP_MODE="dual"
-        print_success "使用 IPv6: ${SERVER_IP}"
+        SERVER_IP=""
+        SERVER_IPV6="$ipv6"
+        INBOUND_IP_MODE="ipv6"
+        [[ -z "$OUTBOUND_IP_MODE" || "$OUTBOUND_IP_MODE" == "dual" ]] && OUTBOUND_IP_MODE="dual"
+        print_success "仅 IPv6 网络: ${SERVER_IPV6}"
         print_info "已自动设置入站为 IPv6，出站为双栈模式"
     fi
     
@@ -1264,6 +1265,10 @@ setup_reality() {
     read -p "SNI域名 [${DEFAULT_SNI}]: " SNI
     SNI=${SNI:-${DEFAULT_SNI}}
     
+    # 每个节点使用独立UUID
+    local NODE_UUID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null)
+    print_info "节点 UUID: ${NODE_UUID}"
+    
     print_info "生成配置文件..."
     
     local listen_addr=$(get_listen_address)
@@ -1272,7 +1277,7 @@ setup_reality() {
   \"tag\": \"vless-in-${PORT}\",
   \"listen\": \"${listen_addr}\",
   \"listen_port\": ${PORT},
-  \"users\": [{\"uuid\": \"${UUID}\", \"flow\": \"xtls-rprx-vision\"}],
+  \"users\": [{\"uuid\": \"${NODE_UUID}\", \"flow\": \"xtls-rprx-vision\"}],
   \"tls\": {
     \"enabled\": true,
     \"server_name\": \"${SNI}\",
@@ -1293,13 +1298,13 @@ setup_reality() {
     
     # 生成 Reality 链接 - 同时支持 IPv4 和 IPv6
     PROTO="Reality"
-    EXTRA_INFO="UUID: ${UUID}\nPublic Key: ${REALITY_PUBLIC}\nShort ID: ${SHORT_ID}\nSNI: ${SNI}"
+    EXTRA_INFO="UUID: ${NODE_UUID}\nPublic Key: ${REALITY_PUBLIC}\nShort ID: ${SHORT_ID}\nSNI: ${SNI}"
     
     # 保存新添加节点的链接（只用于显示）
     CURRENT_NEW_LINKS=""
     
     # IPv4 链接
-    local link_ipv4="vless://${UUID}@${SERVER_IP}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI}&fp=chrome&pbk=${REALITY_PUBLIC}&sid=${SHORT_ID}&type=tcp#Reality-${SERVER_IP}"
+    local link_ipv4="vless://${NODE_UUID}@${SERVER_IP}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI}&fp=chrome&pbk=${REALITY_PUBLIC}&sid=${SHORT_ID}&type=tcp#Reality-${SERVER_IP}"
     add_link "$link_ipv4" "Reality" "$EXTRA_INFO" "${SERVER_IP}" "${PORT}" "${SNI}"
     LINK="$link_ipv4"  # 默认链接
     
@@ -1308,7 +1313,7 @@ setup_reality() {
     
     # IPv6 链接（如果有）
     if [[ -n "${SERVER_IPV6}" ]]; then
-        local link_ipv6="vless://${UUID}@[${SERVER_IPV6}]:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI}&fp=chrome&pbk=${REALITY_PUBLIC}&sid=${SHORT_ID}&type=tcp#Reality-[${SERVER_IPV6}]"
+        local link_ipv6="vless://${NODE_UUID}@[${SERVER_IPV6}]:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI}&fp=chrome&pbk=${REALITY_PUBLIC}&sid=${SHORT_ID}&type=tcp#Reality-[${SERVER_IPV6}]"
         add_link "$link_ipv6" "Reality" "$EXTRA_INFO" "[${SERVER_IPV6}]" "${PORT}" "${SNI}"
         CURRENT_NEW_LINKS="${CURRENT_NEW_LINKS}[Reality] [${SERVER_IPV6}]:${PORT} (SNI: ${SNI})\n${link_ipv6}\n----------------------------------------\n\n"
     fi
@@ -1350,6 +1355,10 @@ setup_hysteria2() {
     
     print_info "生成配置文件..."
     
+    # 每个节点使用独立密码
+    local NODE_HY2_PASSWORD=$(openssl rand -hex 16)
+    print_info "节点密码: ${NODE_HY2_PASSWORD}"
+    
     # 构建 obfs 配置
     local obfs_config=""
     if [[ "$ENABLE_OBFS" =~ ^[Yy]$ ]]; then
@@ -1366,7 +1375,7 @@ setup_hysteria2() {
   \"tag\": \"hy2-in-${PORT}\",
   \"listen\": \"${listen_addr}\",
   \"listen_port\": ${PORT},
-  \"users\": [{\"password\": \"${HY2_PASSWORD}\"}],
+  \"users\": [{\"password\": \"${NODE_HY2_PASSWORD}\"}],
   \"tls\": {
     \"enabled\": true,
     \"alpn\": [\"h3\"],
@@ -1383,7 +1392,7 @@ setup_hysteria2() {
     fi
     
     PROTO="Hysteria2"
-    EXTRA_INFO="密码: ${HY2_PASSWORD}\n证书: 自签证书(${HY2_SNI})\nSNI: ${HY2_SNI}"
+    EXTRA_INFO="密码: ${NODE_HY2_PASSWORD}\n证书: 自签证书(${HY2_SNI})\nSNI: ${HY2_SNI}"
     if [[ "$ENABLE_OBFS" =~ ^[Yy]$ ]]; then
         EXTRA_INFO="${EXTRA_INFO}\nSalamander混淆: 已启用 (密码: ${OBFS_PASSWORD})"
     fi
@@ -1392,7 +1401,7 @@ setup_hysteria2() {
     CURRENT_NEW_LINKS=""
     
     # IPv4 链接
-    local link_ipv4="hysteria2://${HY2_PASSWORD}@${SERVER_IP}:${PORT}?insecure=1&sni=${HY2_SNI}"
+    local link_ipv4="hysteria2://${NODE_HY2_PASSWORD}@${SERVER_IP}:${PORT}?insecure=1&sni=${HY2_SNI}"
     if [[ "$ENABLE_OBFS" =~ ^[Yy]$ ]]; then
         link_ipv4="${link_ipv4}&obfs=salamander&obfs-password=${OBFS_PASSWORD}"
     fi
@@ -1405,7 +1414,7 @@ setup_hysteria2() {
     
     # IPv6 链接（如果有）
     if [[ -n "${SERVER_IPV6}" ]]; then
-        local link_ipv6="hysteria2://${HY2_PASSWORD}@[${SERVER_IPV6}]:${PORT}?insecure=1&sni=${HY2_SNI}"
+        local link_ipv6="hysteria2://${NODE_HY2_PASSWORD}@[${SERVER_IPV6}]:${PORT}?insecure=1&sni=${HY2_SNI}"
         if [[ "$ENABLE_OBFS" =~ ^[Yy]$ ]]; then
             link_ipv6="${link_ipv6}&obfs=salamander&obfs-password=${OBFS_PASSWORD}"
         fi
@@ -1433,6 +1442,10 @@ setup_socks5() {
     
     print_info "生成配置文件..."
     
+    # 每个节点使用独立凭据
+    local NODE_SOCKS_USER="user_$(openssl rand -hex 4)"
+    local NODE_SOCKS_PASS=$(openssl rand -hex 16)
+    
     local listen_addr=$(get_listen_address)
     
     if [[ "$ENABLE_AUTH" =~ ^[Yy]$ ]]; then
@@ -1441,9 +1454,9 @@ setup_socks5() {
   \"tag\": \"socks-in-${PORT}\",
   \"listen\": \"${listen_addr}\",
   \"listen_port\": ${PORT},
-  \"users\": [{\"username\": \"${SOCKS_USER}\", \"password\": \"${SOCKS_PASS}\"}]
+  \"users\": [{\"username\": \"${NODE_SOCKS_USER}\", \"password\": \"${NODE_SOCKS_PASS}\"}]
 }"
-        EXTRA_INFO="用户名: ${SOCKS_USER}\n密码: ${SOCKS_PASS}"
+        EXTRA_INFO="用户名: ${NODE_SOCKS_USER}\n密码: ${NODE_SOCKS_PASS}"
     else
         local inbound="{
   \"type\": \"socks\",
@@ -1468,7 +1481,7 @@ setup_socks5() {
     # IPv4 链接
     local link_ipv4=""
     if [[ "$ENABLE_AUTH" =~ ^[Yy]$ ]]; then
-        link_ipv4="socks5://${SOCKS_USER}:${SOCKS_PASS}@${SERVER_IP}:${PORT}#SOCKS5-${SERVER_IP}"
+        link_ipv4="socks5://${NODE_SOCKS_USER}:${NODE_SOCKS_PASS}@${SERVER_IP}:${PORT}#SOCKS5-${SERVER_IP}"
     else
         link_ipv4="socks5://${SERVER_IP}:${PORT}#SOCKS5-${SERVER_IP}"
     fi
@@ -1482,7 +1495,7 @@ setup_socks5() {
     if [[ -n "${SERVER_IPV6}" ]]; then
         local link_ipv6=""
         if [[ "$ENABLE_AUTH" =~ ^[Yy]$ ]]; then
-            link_ipv6="socks5://${SOCKS_USER}:${SOCKS_PASS}@[${SERVER_IPV6}]:${PORT}#SOCKS5-[${SERVER_IPV6}]"
+            link_ipv6="socks5://${NODE_SOCKS_USER}:${NODE_SOCKS_PASS}@[${SERVER_IPV6}]:${PORT}#SOCKS5-[${SERVER_IPV6}]"
         else
             link_ipv6="socks5://[${SERVER_IPV6}]:${PORT}#SOCKS5-[${SERVER_IPV6}]"
         fi
@@ -1513,6 +1526,12 @@ setup_shadowtls() {
     print_info "生成配置文件..."
     print_warning "ShadowTLS 通过伪装真实域名的TLS握手工作"
     
+    # 每个节点使用独立密码
+    local NODE_SHADOWTLS_PASSWORD=$(openssl rand -hex 16)
+    local NODE_SS_PASSWORD=$(openssl rand -base64 16)
+    print_info "ShadowTLS密码: ${NODE_SHADOWTLS_PASSWORD}"
+    print_info "Shadowsocks密码: ${NODE_SS_PASSWORD}"
+    
     local listen_addr=$(get_listen_address)
     local inbound="{
   \"type\": \"shadowtls\",
@@ -1520,7 +1539,7 @@ setup_shadowtls() {
   \"listen\": \"${listen_addr}\",
   \"listen_port\": ${PORT},
   \"version\": 3,
-  \"users\": [{\"password\": \"${SHADOWTLS_PASSWORD}\"}],
+  \"users\": [{\"password\": \"${NODE_SHADOWTLS_PASSWORD}\"}],
   \"handshake\": {
     \"server\": \"${SHADOWTLS_SNI}\",
     \"server_port\": 443
@@ -1534,10 +1553,10 @@ setup_shadowtls() {
   \"listen\": \"127.0.0.1\",
   \"network\": \"tcp\",
   \"method\": \"2022-blake3-aes-128-gcm\",
-  \"password\": \"${SS_PASSWORD}\"
+  \"password\": \"${NODE_SS_PASSWORD}\"
 }"
     
-    local ss_userinfo=$(echo -n "2022-blake3-aes-128-gcm:${SS_PASSWORD}" | base64 -w0 | sed 's/+/-/g; s/\//_/g; s/=//g')
+    local ss_userinfo=$(echo -n "2022-blake3-aes-128-gcm:${NODE_SS_PASSWORD}" | base64 -w0 | sed 's/+/-/g; s/\//_/g; s/=//g')
     
     if [[ -z "$INBOUNDS_JSON" ]]; then
         INBOUNDS_JSON="$inbound"
@@ -1546,13 +1565,13 @@ setup_shadowtls() {
     fi
     
     PROTO="ShadowTLS v3"
-    EXTRA_INFO="Shadowsocks方法: 2022-blake3-aes-128-gcm\nShadowsocks密码: ${SS_PASSWORD}\nShadowTLS密码: ${SHADOWTLS_PASSWORD}\n伪装域名: ${SHADOWTLS_SNI}\n\n${RED}重要: ShadowTLS 不支持链接格式！${NC}\n${YELLOW}请使用客户端配置文件${NC}"
+    EXTRA_INFO="Shadowsocks方法: 2022-blake3-aes-128-gcm\nShadowsocks密码: ${NODE_SS_PASSWORD}\nShadowTLS密码: ${NODE_SHADOWTLS_PASSWORD}\n伪装域名: ${SHADOWTLS_SNI}\n\n${RED}重要: ShadowTLS 不支持链接格式！${NC}\n${YELLOW}请使用客户端配置文件${NC}"
     
     # 保存新添加节点的链接（只用于显示）
     CURRENT_NEW_LINKS=""
     
     # IPv4 链接
-    local plugin_json_ipv4="{\"version\":\"3\",\"password\":\"${SHADOWTLS_PASSWORD}\",\"host\":\"${SHADOWTLS_SNI}\",\"port\":\"${PORT}\",\"address\":\"${SERVER_IP}\"}"
+    local plugin_json_ipv4="{\"version\":\"3\",\"password\":\"${NODE_SHADOWTLS_PASSWORD}\",\"host\":\"${SHADOWTLS_SNI}\",\"port\":\"${PORT}\",\"address\":\"${SERVER_IP}\"}"
     local plugin_base64_ipv4=$(echo -n "$plugin_json_ipv4" | base64 -w0 | sed 's/+/-/g; s/\//_/g; s/=//g')
     local link_ipv4="ss://${ss_userinfo}@${SERVER_IP}:${PORT}?shadow-tls=${plugin_base64_ipv4}#ShadowTLS-${SERVER_IP}"
     add_link "$link_ipv4" "ShadowTLS v3" "$EXTRA_INFO" "${SERVER_IP}" "${PORT}" "${SHADOWTLS_SNI}"
@@ -1598,7 +1617,7 @@ setup_shadowtls() {
       "type": "shadowsocks",
       "tag": "ShadowTLS-${PORT}",
       "method": "2022-blake3-aes-128-gcm",
-      "password": "${SS_PASSWORD}",
+      "password": "${NODE_SS_PASSWORD}",
       "detour": "shadowtls-out-${PORT}"
     },
     {
@@ -1607,7 +1626,7 @@ setup_shadowtls() {
       "server": "${SERVER_IP}",
       "server_port": ${PORT},
       "version": 3,
-      "password": "${SHADOWTLS_PASSWORD}",
+      "password": "${NODE_SHADOWTLS_PASSWORD}",
       "tls": {
         "enabled": true,
         "server_name": "${SHADOWTLS_SNI}",
@@ -1644,7 +1663,7 @@ EOFCLIENT
     
     # IPv6 链接（如果有）
     if [[ -n "${SERVER_IPV6}" ]]; then
-        local plugin_json_ipv6="{\"version\":\"3\",\"password\":\"${SHADOWTLS_PASSWORD}\",\"host\":\"${SHADOWTLS_SNI}\",\"port\":\"${PORT}\",\"address\":\"${SERVER_IPV6}\"}"
+        local plugin_json_ipv6="{\"version\":\"3\",\"password\":\"${NODE_SHADOWTLS_PASSWORD}\",\"host\":\"${SHADOWTLS_SNI}\",\"port\":\"${PORT}\",\"address\":\"${SERVER_IPV6}\"}"
         local plugin_base64_ipv6=$(echo -n "$plugin_json_ipv6" | base64 -w0 | sed 's/+/-/g; s/\//_/g; s/=//g')
         local link_ipv6="ss://${ss_userinfo}@[${SERVER_IPV6}]:${PORT}?shadow-tls=${plugin_base64_ipv6}#ShadowTLS-[${SERVER_IPV6}]"
         add_link "$link_ipv6" "ShadowTLS v3" "$EXTRA_INFO" "[${SERVER_IPV6}]" "${PORT}" "${SHADOWTLS_SNI}"
@@ -1687,7 +1706,7 @@ EOFCLIENT
       "type": "shadowsocks",
       "tag": "ShadowTLS-${PORT}",
       "method": "2022-blake3-aes-128-gcm",
-      "password": "${SS_PASSWORD}",
+      "password": "${NODE_SS_PASSWORD}",
       "detour": "shadowtls-out-${PORT}"
     },
     {
@@ -1696,7 +1715,7 @@ EOFCLIENT
       "server": "${SERVER_IPV6}",
       "server_port": ${PORT},
       "version": 3,
-      "password": "${SHADOWTLS_PASSWORD}",
+      "password": "${NODE_SHADOWTLS_PASSWORD}",
       "tls": {
         "enabled": true,
         "server_name": "${SHADOWTLS_SNI}",
@@ -1759,6 +1778,10 @@ setup_https() {
     print_info "为 ${HTTPS_SNI} 生成自签证书..."
     gen_cert_for_sni "${HTTPS_SNI}"
     
+    # 每个节点使用独立UUID
+    local NODE_UUID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null)
+    print_info "节点 UUID: ${NODE_UUID}"
+    
     print_info "生成配置文件..."
     
     local listen_addr=$(get_listen_address)
@@ -1767,7 +1790,7 @@ setup_https() {
   \"tag\": \"vless-tls-in-${PORT}\",
   \"listen\": \"${listen_addr}\",
   \"listen_port\": ${PORT},
-  \"users\": [{\"uuid\": \"${UUID}\"}],
+  \"users\": [{\"uuid\": \"${NODE_UUID}\"}],
   \"tls\": {
     \"enabled\": true,
     \"server_name\": \"${HTTPS_SNI}\",
@@ -1783,13 +1806,13 @@ setup_https() {
     fi
     
     PROTO="HTTPS"
-    EXTRA_INFO="UUID: ${UUID}\n证书: 自签证书(${HTTPS_SNI})\nSNI: ${HTTPS_SNI}"
+    EXTRA_INFO="UUID: ${NODE_UUID}\n证书: 自签证书(${HTTPS_SNI})\nSNI: ${HTTPS_SNI}"
     
     # 保存新添加节点的链接（只用于显示）
     CURRENT_NEW_LINKS=""
     
     # IPv4 链接
-    local link_ipv4="vless://${UUID}@${SERVER_IP}:${PORT}?encryption=none&security=tls&sni=${HTTPS_SNI}&type=tcp&allowInsecure=1#HTTPS-${SERVER_IP}"
+    local link_ipv4="vless://${NODE_UUID}@${SERVER_IP}:${PORT}?encryption=none&security=tls&sni=${HTTPS_SNI}&type=tcp&allowInsecure=1#HTTPS-${SERVER_IP}"
     add_link "$link_ipv4" "HTTPS" "$EXTRA_INFO" "${SERVER_IP}" "${PORT}" "${HTTPS_SNI}"
     LINK="$link_ipv4"  # 默认链接
     
@@ -1798,7 +1821,7 @@ setup_https() {
     
     # IPv6 链接（如果有）
     if [[ -n "${SERVER_IPV6}" ]]; then
-        local link_ipv6="vless://${UUID}@[${SERVER_IPV6}]:${PORT}?encryption=none&security=tls&sni=${HTTPS_SNI}&type=tcp&allowInsecure=1#HTTPS-[${SERVER_IPV6}]"
+        local link_ipv6="vless://${NODE_UUID}@[${SERVER_IPV6}]:${PORT}?encryption=none&security=tls&sni=${HTTPS_SNI}&type=tcp&allowInsecure=1#HTTPS-[${SERVER_IPV6}]"
         add_link "$link_ipv6" "HTTPS" "$EXTRA_INFO" "[${SERVER_IPV6}]" "${PORT}" "${HTTPS_SNI}"
         CURRENT_NEW_LINKS="${CURRENT_NEW_LINKS}[HTTPS] [${SERVER_IPV6}]:${PORT} (SNI: ${HTTPS_SNI})\n${link_ipv6}\n----------------------------------------\n\n"
     fi
@@ -1828,11 +1851,9 @@ setup_anytls() {
     read -p "SNI 域名 [${DEFAULT_SNI}]: " ANYTLS_SNI
     ANYTLS_SNI=${ANYTLS_SNI:-${DEFAULT_SNI}}
 
-    # 生成 AnyTLS 密码（如果还没有）
-    if [[ -z "$ANYTLS_PASSWORD" ]]; then
-        ANYTLS_PASSWORD=$(openssl rand -hex 16)
-        save_keys_to_file
-    fi
+    # 每个节点使用独立密码
+    local NODE_ANYTLS_PASSWORD=$(openssl rand -hex 16)
+    print_info "节点密码: ${NODE_ANYTLS_PASSWORD}"
 
     # 如果启用 REALITY，确保 REALITY 密钥对存在
     if [[ "$ENABLE_REALITY" =~ ^[Yy]$ ]]; then
@@ -1887,7 +1908,7 @@ setup_anytls() {
   \"tag\": \"anytls-reality-${PORT}\",
   \"listen\": \"${listen_addr}\",
   \"listen_port\": ${PORT},
-  \"users\": [{\"password\": \"${ANYTLS_PASSWORD}\"}],
+  \"users\": [{\"password\": \"${NODE_ANYTLS_PASSWORD}\"}],
   \"padding_scheme\": ${padding_config},
   \"tls\": {
     \"enabled\": true,
@@ -1904,7 +1925,7 @@ setup_anytls() {
   }
 }"
         PROTO="AnyTLS+REALITY"
-        EXTRA_INFO="密码: ${ANYTLS_PASSWORD}\nREALITY 公钥: ${REALITY_PUBLIC}\nShort ID: ${SHORT_ID}\nSNI: ${ANYTLS_SNI}"
+        EXTRA_INFO="密码: ${NODE_ANYTLS_PASSWORD}\nREALITY 公钥: ${REALITY_PUBLIC}\nShort ID: ${SHORT_ID}\nSNI: ${ANYTLS_SNI}"
 
         # 生成客户端 JSON 配置文件（sing-box 格式），并根据系统选择 TUN 栈
         local tun_stack="system"
@@ -1931,7 +1952,7 @@ setup_anytls() {
       "tag": "AnyTLS+REALITY",
       "server": "${SERVER_IP}",
       "server_port": ${PORT},
-      "password": "${ANYTLS_PASSWORD}",
+      "password": "${NODE_ANYTLS_PASSWORD}",
       "tls": {
         "enabled": true,
         "server_name": "${ANYTLS_SNI}",
@@ -1965,7 +1986,7 @@ EOF
   \"tag\": \"anytls-in-${PORT}\",
   \"listen\": \"${listen_addr}\",
   \"listen_port\": ${PORT},
-  \"users\": [{\"password\": \"${ANYTLS_PASSWORD}\"}],
+  \"users\": [{\"password\": \"${NODE_ANYTLS_PASSWORD}\"}],
   \"padding_scheme\": ${padding_config},
   \"tls\": {
     \"enabled\": true,
@@ -1975,9 +1996,9 @@ EOF
   }
 }"
         PROTO="AnyTLS"
-        EXTRA_INFO="密码: ${ANYTLS_PASSWORD}\n证书: 自签证书 (${ANYTLS_SNI})"
+        EXTRA_INFO="密码: ${NODE_ANYTLS_PASSWORD}\n证书: 自签证书 (${ANYTLS_SNI})"
         # 生成 anytls:// 链接，insecure 根据用户选择
-        LINK="anytls://${ANYTLS_PASSWORD}@${SERVER_IP}:${PORT}?security=tls&fp=${UTLS_FINGERPRINT}&insecure=${insecure_bool}&sni=${ANYTLS_SNI}&type=tcp#AnyTLS-${SERVER_IP}"
+        LINK="anytls://${NODE_ANYTLS_PASSWORD}@${SERVER_IP}:${PORT}?security=tls&fp=${UTLS_FINGERPRINT}&insecure=${insecure_bool}&sni=${ANYTLS_SNI}&type=tcp#AnyTLS-${SERVER_IP}"
     fi
 
     # 并入全局 inbound JSON
@@ -2583,9 +2604,10 @@ setup_relay() {
         echo -e "  ${GREEN}[2]${NC} 为节点配置中转"
         echo -e "  ${GREEN}[3]${NC} 删除中转链接"
         echo -e "  ${GREEN}[4]${NC} 域名分流配置"
+        echo -e "  ${GREEN}[5]${NC} 修改中转链接"
         echo -e "  ${GREEN}[0]${NC} 返回主菜单"
         echo ""
-        read -p "请选择 [0-4]: " r_choice
+        read -p "请选择 [0-5]: " r_choice
         
         case $r_choice in
             1)
@@ -2836,6 +2858,115 @@ setup_relay() {
                 ;;
             4)
                 domain_route_menu
+                ;;
+            5)
+                if [[ ${#RELAY_TAGS[@]} -eq 0 ]]; then
+                    print_warning "当前没有中转链接"
+                    continue
+                fi
+                
+                echo ""
+                echo -e "${CYAN}修改中转链接:${NC}"
+                for i in "${!RELAY_TAGS[@]}"; do
+                    idx=$((i+1))
+                    echo -e "  ${GREEN}[${idx}]${NC} ${RELAY_DESCS[$i]}"
+                done
+                echo ""
+                read -p "请选择要修改的中转 (输入 -1 取消): " edit_idx
+                
+                if [[ "$edit_idx" == "-1" ]]; then
+                    continue
+                fi
+                
+                if ! [[ "$edit_idx" =~ ^[0-9]+$ ]] || (( edit_idx < 1 || edit_idx > ${#RELAY_TAGS[@]} )); then
+                    print_error "无效选择"
+                    continue
+                fi
+                
+                local e=$((edit_idx-1))
+                local old_tag="${RELAY_TAGS[$e]}"
+                local old_desc="${RELAY_DESCS[$e]}"
+                
+                echo ""
+                echo -e "${YELLOW}当前中转: ${old_desc}${NC}"
+                echo -e "${CYAN}请输入新的中转链接 (保留原tag，分流和中转配置不受影响):${NC}"
+                echo ""
+                read -p "粘贴新的中转链接: " NEW_RELAY_LINK
+                
+                if [[ -z "$NEW_RELAY_LINK" ]]; then
+                    print_warning "未提供链接，修改取消"
+                    continue
+                fi
+                
+                echo ""
+                read -p "请输入新的描述信息 (留空则自动生成): " new_custom_desc
+                
+                # 临时保存当前数组状态（解析失败时恢复）
+                local saved_tags=("${RELAY_TAGS[@]}")
+                local saved_jsons=("${RELAY_JSONS[@]}")
+                local saved_descs=("${RELAY_DESCS[@]}")
+                
+                # 临时清空数组，解析新链接以获取JSON结构
+                local tmp_tags=("${RELAY_TAGS[@]}")
+                local tmp_jsons=("${RELAY_JSONS[@]}")
+                local tmp_descs=("${RELAY_DESCS[@]}")
+                RELAY_TAGS=()
+                RELAY_JSONS=()
+                RELAY_DESCS=()
+                
+                # 解析新链接
+                local parse_ok=0
+                if [[ "$NEW_RELAY_LINK" =~ ^socks ]]; then
+                    parse_socks_link "$NEW_RELAY_LINK" "$new_custom_desc" && parse_ok=1
+                elif [[ "$NEW_RELAY_LINK" =~ ^https? ]]; then
+                    parse_http_link "$NEW_RELAY_LINK" "$new_custom_desc" && parse_ok=1
+                elif [[ "$NEW_RELAY_LINK" =~ ^ss:// ]]; then
+                    parse_ss_link "$NEW_RELAY_LINK" "$new_custom_desc" && parse_ok=1
+                elif [[ "$NEW_RELAY_LINK" =~ ^vmess:// ]]; then
+                    parse_vmess_link "$NEW_RELAY_LINK" "$new_custom_desc" && parse_ok=1
+                elif [[ "$NEW_RELAY_LINK" =~ ^vless:// ]]; then
+                    parse_vless_link "$NEW_RELAY_LINK" "$new_custom_desc" && parse_ok=1
+                elif [[ "$NEW_RELAY_LINK" =~ ^trojan:// ]]; then
+                    parse_trojan_link "$NEW_RELAY_LINK" "$new_custom_desc" && parse_ok=1
+                elif [[ "$NEW_RELAY_LINK" =~ ^(hy2|hysteria2):// ]]; then
+                    parse_hysteria2_link "$NEW_RELAY_LINK" "$new_custom_desc" && parse_ok=1
+                elif [[ "$NEW_RELAY_LINK" =~ ^anytls:// ]]; then
+                    parse_anytls_link "$NEW_RELAY_LINK" && parse_ok=1
+                else
+                    print_error "不支持的链接格式"
+                fi
+                
+                if [[ $parse_ok -eq 1 ]]; then
+                    # 从解析结果中提取新JSON和新描述
+                    local new_json="${RELAY_JSONS[0]}"
+                    local new_desc="${RELAY_DESCS[0]}"
+                    
+                    # 将新JSON中的tag替换为原tag
+                    local new_tag="${RELAY_TAGS[0]}"
+                    new_json=$(echo "$new_json" | sed "s/\"${new_tag}\"/\"${old_tag}\"/g")
+                    
+                    # 恢复原数组，替换指定位置
+                    RELAY_TAGS=("${tmp_tags[@]}")
+                    RELAY_JSONS=("${tmp_jsons[@]}")
+                    RELAY_DESCS=("${tmp_descs[@]}")
+                    
+                    RELAY_JSONS[$e]="$new_json"
+                    RELAY_DESCS[$e]="$new_desc"
+                    
+                    save_relays_to_file
+                    print_success "中转已修改: ${old_desc} → ${new_desc}"
+                    
+                    # 重新生成配置
+                    if [[ -n "$INBOUNDS_JSON" ]]; then
+                        generate_config && start_svc
+                    fi
+                else
+                    # 解析失败，恢复原数组
+                    RELAY_TAGS=("${saved_tags[@]}")
+                    RELAY_JSONS=("${saved_jsons[@]}")
+                    RELAY_DESCS=("${saved_descs[@]}")
+                    print_error "新链接解析失败，中转配置未修改"
+                fi
                 ;;
             0)
                 break
