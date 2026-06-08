@@ -3328,12 +3328,16 @@ fi
     "level": "info",
     "timestamp": true
   },
-  "dns": {
+"dns": {
     "servers": [
-      {"tag": "remote", "address": "udp://8.8.8.8"}$dns_server_extra
+      {
+        "tag": "remote",
+        "address": "8.8.8.8",
+        "address_resolver": "local"
+      }
     ],
     "final": "remote"
-  },
+},
   "inbounds": [${INBOUNDS_JSON}],
   "outbounds": ${outbounds},
   "route": ${route_json}
