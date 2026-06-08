@@ -3250,6 +3250,12 @@ generate_config() {
     local direct_outbound='{"type": "direct", "tag": "direct", "tcp_fast_open": false}'
     outbounds_array+=("$direct_outbound")
     
+    # ipv6_only 模式下添加 block outbound 用于阻断 IPv4 出站
+    if [[ "$OUTBOUND_IP_MODE" == "ipv6_only" ]]; then
+        local block_outbound='{"type": "block", "tag": "block-ipv4"}'
+        outbounds_array+=("$block_outbound")
+    fi
+    
     # 组合 outbounds
     local outbounds="["
     for i in "${!outbounds_array[@]}"; do
@@ -3264,6 +3270,12 @@ generate_config() {
     # 构建路由规则
     local route_rules=()
     local has_relay=0
+    
+    # ipv6_only 模式下，添加规则阻断所有 IPv4 出站流量
+    if [[ "$OUTBOUND_IP_MODE" == "ipv6_only" ]]; then
+        route_rules+=('{"ip_cidr":["0.0.0.0/0"],"outbound":"block-ipv4"}')
+        has_relay=1
+    fi
     
     # 1. 首先添加所有分流域名规则（无论节点默认是中转还是直连）
     for route in "${DOMAIN_ROUTES[@]}"; do
@@ -4456,9 +4468,18 @@ main_menu() {
 setup_sb_shortcut() {
     print_info "创建快捷命令 sb..."
     
+    local sb_target="/etc/sing-box/install.sh"
+    
+    # 确保脚本在标准位置
     if [[ ! -f "${SCRIPT_PATH}" ]]; then
-        print_warning "当前脚本并非磁盘文件，跳过创建 sb"
+        print_warning "脚本不在磁盘上，跳过创建 sb"
         return
+    fi
+    
+    # 如果脚本不在标准位置，复制一份
+    if [[ "${SCRIPT_PATH}" != "${sb_target}" ]]; then
+        cp "${SCRIPT_PATH}" "${sb_target}" 2>/dev/null && chmod +x "${sb_target}"
+        SCRIPT_PATH="${sb_target}"
     fi
     
     cat > /usr/local/bin/sb << EOSB
@@ -4474,6 +4495,28 @@ main() {
     if [[ $EUID -ne 0 ]]; then
         print_error "需要 root 权限"
         exit 1
+    fi
+    
+    # 如果脚本不在磁盘上（如 curl|bash 方式运行），先保存到磁盘再重新执行
+    local sb_script="/etc/sing-box/install.sh"
+    if [[ ! -f "${SCRIPT_PATH}" ]]; then
+        mkdir -p /etc/sing-box
+        # 尝试从 BASH_SOURCE 获取
+        local script_src="${BASH_SOURCE[0]:-$0}"
+        if [[ -f "${script_src}" ]]; then
+            cp "${script_src}" "${sb_script}" 2>/dev/null
+        fi
+        # 如果 BASH_SOURCE 也不可用，从 GitHub 重新下载
+        if [[ ! -f "${sb_script}" ]]; then
+            print_info "脚本不在磁盘上，从 GitHub 下载到 ${sb_script} ..."
+            local repo_raw="https://raw.githubusercontent.com/Kiss8202/argo/main/install.sh"
+            wget -q -O "${sb_script}" "${repo_raw}" 2>/dev/null || curl -sL -o "${sb_script}" "${repo_raw}" 2>/dev/null || true
+        fi
+        if [[ -f "${sb_script}" ]]; then
+            chmod +x "${sb_script}"
+            print_success "脚本已保存到 ${sb_script}，重新执行..."
+            exec bash "${sb_script}" "$@"
+        fi
     fi
     
     detect_system
