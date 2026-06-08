@@ -3315,16 +3315,11 @@ generate_config() {
     done
 
     local route_json
-    if [[ $has_relay -eq 1 ]]; then
-        route_json="{\"rules\":["
-        for i in "${!route_rules[@]}"; do
-            [[ $i -gt 0 ]] && route_json+=","
-            route_json+="${route_rules[$i]}"
-        done
-        route_json+="],\"final\":\"direct\",\"default_domain_resolver\":\"local\"}"
-    else
-        route_json="{\"final\":\"direct\",\"default_domain_resolver\":\"local\"}"
-    fi
+if [[ $has_relay -eq 1 ]]; then
+    route_json="{\"rules\":[...],\"final\":\"direct\",\"default_domain_resolver\":\"remote\"}"
+else
+    route_json="{\"final\":\"direct\",\"default_domain_resolver\":\"remote\"}"
+fi
 
     # ========== 最终写入配置文件 ==========
     cat > ${CONFIG_FILE} << EOFCONFIG
@@ -3335,7 +3330,6 @@ generate_config() {
   },
   "dns": {
     "servers": [
-      {"tag": "local", "address": "local"},
       {"tag": "remote", "address": "udp://8.8.8.8"}$dns_server_extra
     ],
     "final": "remote"
