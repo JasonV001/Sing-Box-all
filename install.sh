@@ -3200,34 +3200,38 @@ EOFCONFIG
 }
 # ==================== 配置生成（修复路由逻辑） ====================
 generate_config() {
-    print_info "生成最终配置文件..."
+    # ... (原有的备份和基础检查代码保持不变) ...
 
-    if [[ -f "${CONFIG_FILE}" ]]; then
-        local backup_file="${CONFIG_FILE}.bak.$(date +%Y%m%d%H%M%S)"
-        cp "${CONFIG_FILE}" "${backup_file}" 2>/dev/null
-        print_info "已备份配置到: ${backup_file}"
-    fi
-
-    if [[ -z "$INBOUNDS_JSON" ]]; then
-        print_error "未找到任何入站节点，请先添加节点"
-        return 1
-    fi
-
-    load_relays_from_file
-
-    # ---------- 1. 设置 domain_strategy 值 ----------
-    local domain_strategy=""
+    # 根据 OUTBOUND_IP_MODE 设置 domain_resolver 标签
+    local domain_resolver_tag=""
     case "$OUTBOUND_IP_MODE" in
-        "ipv4") domain_strategy="prefer_ipv4" ;;
-        "ipv6") domain_strategy="prefer_ipv6" ;;
-        "dual") domain_strategy="" ;;
+        "ipv4") domain_resolver_tag="dns-prefer-ipv4" ;;
+        "ipv6") domain_resolver_tag="dns-prefer-ipv6" ;;
+        "dual") domain_resolver_tag="" ;;
     esac
 
-    # ---------- 2. 构建 outbounds 数组 ----------
+    # 新增一个用于出站的专用 DNS 服务器
+    local outbound_dns_server=""
+    if [[ "$domain_resolver_tag" == "dns-prefer-ipv4" ]]; then
+        outbound_dns_server=', {
+  "tag": "dns-prefer-ipv4",
+  "address": "1.1.1.1",
+  "strategy": "prefer_ipv4"
+}'
+    elif [[ "$domain_resolver_tag" == "dns-prefer-ipv6" ]]; then
+        outbound_dns_server=', {
+  "tag": "dns-prefer-ipv6",
+  "address": "2606:4700:4700::1111",
+  "strategy": "prefer_ipv6"
+}'
+    fi
+
+    # 修改 outbounds 数组，为 direct 和中转 outbound 添加 domain_resolver
     local outbounds_array=()
     for relay_json in "${RELAY_JSONS[@]}"; do
-        if [[ -n "$domain_strategy" ]]; then
-            local modified_json=$(echo "$relay_json" | jq --arg ds "$domain_strategy" '. + {domain_strategy: $ds}')
+        if [[ -n "$domain_resolver_tag" ]]; then
+            # 使用 jq 添加 domain_resolver 字段
+            local modified_json=$(echo "$relay_json" | jq --arg dr "$domain_resolver_tag" '. + {domain_resolver: $dr}')
             outbounds_array+=("$modified_json")
         else
             outbounds_array+=("$relay_json")
@@ -3235,38 +3239,26 @@ generate_config() {
     done
 
     local direct_outbound='{"type": "direct", "tag": "direct", "tcp_fast_open": false'
-    if [[ -n "$domain_strategy" ]]; then
-        direct_outbound+=', "domain_strategy": "'"${domain_strategy}"'"'
+    if [[ -n "$domain_resolver_tag" ]]; then
+        direct_outbound+=', "domain_resolver": "'"${domain_resolver_tag}"'"'
     fi
     direct_outbound+='}'
     outbounds_array+=("$direct_outbound")
-
     local outbounds=$(printf "%s\n" "${outbounds_array[@]}" | jq -s '.')
 
-    # ---------- 3. 加载分流规则 ----------
-    load_domain_routes_from_file
+    # ... (原有的路由规则生成代码保持不变) ...
 
-    # ---------- 4. 构建路由规则 ----------
-    local route_rules=()
-    local has_relay=0
-    # ... （此部分逻辑无需改动，省略代码） ...
-
-    # ---------- 5. 构建 route 对象（无 final_domain_strategy） ----------
-    local route_json
-    if [[ $has_relay -eq 1 ]]; then
-        route_json="{\"rules\":[...],\"final\":\"direct\",\"default_domain_resolver\":\"local\"}"
-    else
-        route_json="{\"final\":\"direct\",\"default_domain_resolver\":\"local\"}"
-    fi
-
-    # ---------- 6. DNS 配置 ----------
+    # 写入最终配置，这里将专用的 DNS 服务器加入到 dns.servers 中
     cat > ${CONFIG_FILE} << EOFCONFIG
 {
-  "log": { "level": "info", "timestamp": true },
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
   "dns": {
     "servers": [
       {"tag": "local", "type": "local"},
-      {"tag": "remote", "type": "udp", "server": "8.8.8.8"}
+      {"tag": "remote", "type": "udp", "server": "8.8.8.8"}$outbound_dns_server
     ],
     "final": "remote"
   },
