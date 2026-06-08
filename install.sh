@@ -3212,42 +3212,54 @@ generate_config() {
         print_error "未找到任何入站节点，请先添加节点"
         return 1
     fi
-    
-    # 加载中转配置
+
     load_relays_from_file
-    
-    # 构建 outbounds 数组
+
+    # ---------- 根据 OUTBOUND_IP_MODE 设置 domain_strategy (优先模式) ----------
+    local domain_strategy=""
+    case "$OUTBOUND_IP_MODE" in
+        "ipv4") domain_strategy="prefer_ipv4" ;;
+        "ipv6") domain_strategy="prefer_ipv6" ;;
+        "dual") domain_strategy="" ;;
+    esac
+
+    # ---------- 构建 outbounds 数组 ----------
     local outbounds_array=()
-    
-    # 添加所有中转 outbound
+
+    # 处理所有中转 outbound (为每个添加 domain_strategy)
     for relay_json in "${RELAY_JSONS[@]}"; do
-        outbounds_array+=("$relay_json")
+        if [[ -n "$domain_strategy" ]]; then
+            # 使用 jq 安全添加字段
+            local modified_json=$(echo "$relay_json" | jq --arg ds "$domain_strategy" '. + {domain_strategy: $ds}')
+            outbounds_array+=("$modified_json")
+        else
+            outbounds_array+=("$relay_json")
+        fi
     done
-    
+
     # 添加 direct outbound
-    local direct_outbound='{"type": "direct", "tag": "direct", "tcp_fast_open": false}'
+    local direct_outbound='{"type": "direct", "tag": "direct", "tcp_fast_open": false'
+    if [[ -n "$domain_strategy" ]]; then
+        direct_outbound+=', "domain_strategy": "'"${domain_strategy}"'"'
+    fi
+    direct_outbound+='}'
     outbounds_array+=("$direct_outbound")
-    
-    # 组合 outbounds
-    local outbounds="["
-    for i in "${!outbounds_array[@]}"; do
-        [[ $i -gt 0 ]] && outbounds+=", "
-        outbounds+="${outbounds_array[$i]}"
-    done
-    outbounds+="]"
-    
-    # 加载分流规则
+
+    # 将数组转换为 JSON 数组字符串 (使用 jq)
+    local outbounds=$(printf "%s\n" "${outbounds_array[@]}" | jq -s '.')
+
+    # ---------- 加载分流规则 ----------
     load_domain_routes_from_file
-    
-    # 构建路由规则
+
+    # ---------- 构建路由规则 ----------
     local route_rules=()
     local has_relay=0
-    
-    # 1. 首先添加所有分流域名规则（无论节点默认是中转还是直连）
+
+    # 1. 首先添加所有分流域名规则
     for route in "${DOMAIN_ROUTES[@]}"; do
         IFS='|' read -r inbound_tag match_type match_value relay_tag desc <<< "$route"
         [[ -z "$inbound_tag" || -z "$match_type" || -z "$match_value" || -z "$relay_tag" ]] && continue
-        
+
         # 检查中转是否存在
         local relay_exists=0
         for rt in "${RELAY_TAGS[@]}"; do
@@ -3260,39 +3272,26 @@ generate_config() {
             print_warning "分流规则引用的中转 ${relay_tag} 不存在，跳过规则: ${match_type}=${match_value}"
             continue
         fi
-        
-        # 根据匹配类型生成对应的 sing-box 规则
+
         local rule_part=""
         case "$match_type" in
-            domain_suffix)
-                rule_part="\"domain_suffix\":[\"${match_value}\"]"
-                ;;
-            domain)
-                rule_part="\"domain\":[\"${match_value}\"]"
-                ;;
-            domain_keyword)
-                rule_part="\"domain_keyword\":[\"${match_value}\"]"
-                ;;
-            ip_cidr)
-                rule_part="\"ip_cidr\":[\"${match_value}\"]"
-                ;;
-            *)
-                continue
-                ;;
+            domain_suffix)   rule_part="\"domain_suffix\":[\"${match_value}\"]" ;;
+            domain)          rule_part="\"domain\":[\"${match_value}\"]" ;;
+            domain_keyword)  rule_part="\"domain_keyword\":[\"${match_value}\"]" ;;
+            ip_cidr)         rule_part="\"ip_cidr\":[\"${match_value}\"]" ;;
+            *) continue ;;
         esac
-        
+
         route_rules+=("{\"inbound\":[\"${inbound_tag}\"],${rule_part},\"outbound\":\"${relay_tag}\"}")
         has_relay=1
     done
-    
-    # 2. 为每个节点添加默认路由（仅当节点配置了中转且不是 direct）
+
+    # 2. 为每个节点添加默认路由 (仅当节点配置了中转且不是 direct)
     for i in "${!INBOUND_TAGS[@]}"; do
         local inbound_tag="${INBOUND_TAGS[$i]}"
         local relay_tag="${INBOUND_RELAY_TAGS[$i]}"
-        
-        # 如果节点配置了具体的中转（非 direct），则添加兜底规则
+
         if [[ "$relay_tag" != "direct" ]]; then
-            # 检查中转是否存在
             local relay_exists=0
             for rt in "${RELAY_TAGS[@]}"; do
                 if [[ "$rt" == "$relay_tag" ]]; then
@@ -3309,7 +3308,7 @@ generate_config() {
             has_relay=1
         fi
     done
-    
+
     # 组合路由配置
     local route_json
     if [[ $has_relay -eq 1 ]]; then
@@ -3322,21 +3321,14 @@ generate_config() {
     else
         route_json="{\"final\":\"direct\",\"default_domain_resolver\":\"local\"}"
     fi
-    
-    # 构建 DNS 配置（根据出站 IP 模式）
+
+    # ---------- DNS 配置 (根据出站模式设置 strategy) ----------
     local dns_json
     if [[ "$OUTBOUND_IP_MODE" == "ipv6" ]]; then
         dns_json='{
     "servers": [
-      {
-        "tag": "local",
-        "type": "local"
-      },
-      {
-        "tag": "remote",
-        "type": "udp",
-        "server": "8.8.8.8"
-      }
+      {"tag": "local", "type": "local"},
+      {"tag": "remote", "type": "udp", "server": "8.8.8.8"}
     ],
     "final": "remote",
     "strategy": "prefer_ipv6"
@@ -3344,36 +3336,23 @@ generate_config() {
     elif [[ "$OUTBOUND_IP_MODE" == "dual" ]]; then
         dns_json='{
     "servers": [
-      {
-        "tag": "local",
-        "type": "local"
-      },
-      {
-        "tag": "remote",
-        "type": "udp",
-        "server": "8.8.8.8"
-      }
+      {"tag": "local", "type": "local"},
+      {"tag": "remote", "type": "udp", "server": "8.8.8.8"}
     ],
     "final": "remote"
   }'
     else
         dns_json='{
     "servers": [
-      {
-        "tag": "local",
-        "type": "local"
-      },
-      {
-        "tag": "remote",
-        "type": "udp",
-        "server": "8.8.8.8"
-      }
+      {"tag": "local", "type": "local"},
+      {"tag": "remote", "type": "udp", "server": "8.8.8.8"}
     ],
     "final": "remote",
     "strategy": "prefer_ipv4"
   }'
     fi
-    
+
+    # ---------- 写入最终配置文件 ----------
     cat > ${CONFIG_FILE} << EOFCONFIG
 {
   "log": {
@@ -3386,7 +3365,7 @@ generate_config() {
   "route": ${route_json}
 }
 EOFCONFIG
-    
+
     print_success "配置文件生成完成"
 }
 
