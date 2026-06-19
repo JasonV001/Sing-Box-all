@@ -1,8 +1,8 @@
 cat > /root/vps-test.sh << 'EOF'
 #!/bin/bash
 # ===================================================
-# VPS 网络质量交互测试脚本 (v12 - 显示测速节点)
-# 新增：在测速结果中显示服务器名称/节点信息
+# VPS 网络质量交互测试脚本 (v14 - 手动选择国内节点)
+# 修改：菜单1第二步改为选择城市+运营商，支持联通/移动/电信
 # ===================================================
 
 RED='\033[0;31m'
@@ -81,7 +81,7 @@ evaluate_combined() {
     echo -e "${BLUE}========================================${NC}"
 }
 
-# ---------- 解析 Speedtest 文本输出（返回 下载 上传 服务器信息） ----------
+# ---------- 解析 Speedtest 文本输出 ----------
 run_speedtest() {
     local id="$1"
     local output_file="/tmp/speedtest_output.txt"
@@ -98,7 +98,6 @@ run_speedtest() {
     fi
     local download=$(grep -i "Download:" "$output_file" | tail -1 | sed -E 's/.*Download:[[:space:]]*([0-9.]+).*/\1/')
     local upload=$(grep -i "Upload:" "$output_file" | tail -1 | sed -E 's/.*Upload:[[:space:]]*([0-9.]+).*/\1/')
-    # 提取服务器信息 (第一行 Server: 或含 (id: 的行)
     local server=$(grep -i "Server:" "$output_file" | head -1 | sed -E 's/^[[:space:]]*Server:[[:space:]]*//')
     if [ -z "$server" ]; then
         server="未知节点"
@@ -108,10 +107,14 @@ run_speedtest() {
     return 0
 }
 
-# ---------- 获取节点ID ----------
+# ---------- 获取节点ID（支持城市和运营商） ----------
 get_node_id() {
     local city="$1"
-    speedtest --servers 2>/dev/null | grep -i "$city" | grep -i "china unicom" | head -1 | awk '{print $1}'
+    local isp="$2"
+    if [ -z "$isp" ]; then
+        isp="china unicom"  # 默认联通
+    fi
+    speedtest --servers 2>/dev/null | grep -i "$city" | grep -i "$isp" | head -1 | awk '{print $1}'
 }
 
 # ---------- 智能解析域名 ----------
@@ -214,21 +217,44 @@ menu_speedtest() {
     local local_server=$(echo "$local_result" | cut -d' ' -f3-)
     evaluate_speed "本地" "$local_dl" "$local_ul" "$local_server"
 
-    echo -e "${YELLOW}\n第二步：选择国内联通节点测速${NC}"
-    echo "1) 沈阳联通  2) 大连联通  3) 北京联通  4) 上海联通  5) 自动选择"
-    read -p "请输入选项 [1-5] (默认5): " opt
-    opt=${opt:-5}
+    echo -e "${YELLOW}\n第二步：选择国内测速节点 (运营商+城市)${NC}"
+    echo "  联通节点:"
+    echo "    1) 北京联通    2) 上海联通    3) 广州联通"
+    echo "    4) 沈阳联通    5) 大连联通"
+    echo "  移动节点:"
+    echo "    6) 北京移动    7) 上海移动    8) 广州移动"
+    echo "  电信节点:"
+    echo "    9) 北京电信   10) 上海电信   11) 广州电信"
+    echo " 12) 手动输入城市和运营商 (如: shenyang unicom)"
+    echo " 13) 自动 (不推荐，可能测到日本)"
+    read -p "请选择 [1-13] (默认1): " opt
+    opt=${opt:-1}
     local id=""
+    local desc=""
     case $opt in
-        1) id=$(get_node_id "shenyang") ;;
-        2) id=$(get_node_id "dalian") ;;
-        3) id=$(get_node_id "beijing") ;;
-        4) id=$(get_node_id "shanghai") ;;
-        5) id="" ;;
-        *) echo "无效，使用自动"; id="" ;;
+        1) id=$(get_node_id "beijing" "china unicom"); desc="北京联通" ;;
+        2) id=$(get_node_id "shanghai" "china unicom"); desc="上海联通" ;;
+        3) id=$(get_node_id "guangzhou" "china unicom"); desc="广州联通" ;;
+        4) id=$(get_node_id "shenyang" "china unicom"); desc="沈阳联通" ;;
+        5) id=$(get_node_id "dalian" "china unicom"); desc="大连联通" ;;
+        6) id=$(get_node_id "beijing" "china mobile"); desc="北京移动" ;;
+        7) id=$(get_node_id "shanghai" "china mobile"); desc="上海移动" ;;
+        8) id=$(get_node_id "guangzhou" "china mobile"); desc="广州移动" ;;
+        9) id=$(get_node_id "beijing" "china telecom"); desc="北京电信" ;;
+       10) id=$(get_node_id "shanghai" "china telecom"); desc="上海电信" ;;
+       11) id=$(get_node_id "guangzhou" "china telecom"); desc="广州电信" ;;
+       12) read -p "请输入城市和运营商 (如: shenyang unicom): " custom; id=$(get_node_id "$custom"); desc="自定义 ($custom)" ;;
+       13) id=""; desc="自动 (可能测到日本)" ;;
+       *) echo "无效" ; sleep 1 ; menu_speedtest ; return ;;
     esac
+
+    if [ -z "$id" ] && [ "$opt" != "13" ]; then
+        echo -e "${YELLOW}未找到对应节点，使用自动测速${NC}"
+        id=""
+        desc="自动 (查找失败)"
+    fi
     if [ -n "$id" ]; then
-        echo -e "${YELLOW}使用节点 ID: $id${NC}"
+        echo -e "${YELLOW}使用节点 ID: $id (${desc})${NC}"
     else
         echo -e "${YELLOW}使用默认就近测速${NC}"
     fi
@@ -419,7 +445,7 @@ menu_uninstall() {
 main_menu() {
     clear
     echo -e "${BLUE}========================================${NC}"
-    echo -e "${GREEN}  VPS 网络测试 (v12 - 显示测速节点)${NC}"
+    echo -e "${GREEN}  VPS 网络测试 (v14 - 手动选择国内节点)${NC}"
     echo -e "${BLUE}========================================${NC}"
     echo "1) 带宽测速（本地+国内，自动对比）"
     echo "2) MTR 延迟/丢包 (含评价)"
