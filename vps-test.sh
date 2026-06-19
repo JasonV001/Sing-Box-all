@@ -1,8 +1,8 @@
 cat > /root/vps-test.sh << 'EOF'
 #!/bin/bash
 # ===================================================
-# VPS 网络质量交互测试脚本 (v16 - 本地测速缓存)
-# 新增：首次测速后缓存结果，下次可选择跳过本地测速
+# VPS 网络质量交互测试脚本 (v17 - 显示可用节点列表)
+# 新增：预设节点找不到时，自动显示可用中国节点列表
 # ===================================================
 
 RED='\033[0;31m'
@@ -120,6 +120,21 @@ get_node_id() {
     return 1
 }
 
+# ---------- 显示可用中国节点列表 ----------
+show_china_nodes() {
+    echo -e "${YELLOW}正在获取可用中国节点列表...${NC}"
+    local nodes=$(speedtest --servers 2>/dev/null | grep -i "china" | head -15)
+    if [ -z "$nodes" ]; then
+        echo -e "${RED}无法获取节点列表，请检查网络或手动输入节点ID。${NC}"
+        echo -e "${YELLOW}你可以使用命令: speedtest --servers | grep -i china 自行查看。${NC}"
+        return 1
+    fi
+    echo -e "${GREEN}以下是部分可用中国节点（ID + 名称）：${NC}"
+    echo "$nodes" | awk '{print "  " $1 " - " $2 " " $3 " " $4}'
+    echo -e "${YELLOW}你可以选择 12 手动输入城市和运营商，例如: beijing unicom${NC}"
+    return 0
+}
+
 # ---------- 智能解析域名 ----------
 resolve_ip() {
     local target="$1"
@@ -202,7 +217,7 @@ parse_mtr() {
     echo "$avg"; echo "$loss"; return 0
 }
 
-# ---------- 菜单1：集成测速（支持本地缓存） ----------
+# ---------- 菜单1：集成测速（支持本地缓存和节点列表） ----------
 menu_speedtest() {
     clear
     echo -e "${BLUE}========================================${NC}"
@@ -212,9 +227,7 @@ menu_speedtest() {
     local local_dl local_ul local_server
     local local_result_file="/tmp/local_speed_result.txt"
     
-    # 检查是否有上次的本地测速记录
     if [ -f "$local_result_file" ] && [ -s "$local_result_file" ]; then
-        # 读取上次记录
         read local_dl local_ul local_server < "$local_result_file"
         echo -e "${YELLOW}检测到上次本地测速结果：${NC}"
         echo -e "下载: ${local_dl} Mbps, 上传: ${local_ul} Mbps (节点: ${local_server})"
@@ -238,7 +251,6 @@ menu_speedtest() {
             evaluate_speed "本地" "$local_dl" "$local_ul" "$local_server"
         fi
     else
-        # 无记录，正常测速
         echo -e "${YELLOW}第一步：测本地带宽（最近节点）...${NC}"
         local_result=$(run_speedtest "")
         if [ $? -ne 0 ]; then
@@ -292,6 +304,8 @@ menu_speedtest() {
     if [ -z "$id" ] && [ "$opt" != "13" ]; then
         echo -e "${RED}❌ 未找到对应节点，请检查城市/运营商名称是否正确。${NC}"
         echo -e "${YELLOW}提示：你可以选 12 手动输入，例如 shenyang unicom${NC}"
+        # 显示可用节点列表
+        show_china_nodes
         read -p "按回车返回..."
         return
     fi
@@ -493,7 +507,7 @@ menu_uninstall() {
 main_menu() {
     clear
     echo -e "${BLUE}========================================${NC}"
-    echo -e "${GREEN}  VPS 网络测试 (v16 - 本地测速缓存)${NC}"
+    echo -e "${GREEN}  VPS 网络测试 (v17 - 显示节点列表)${NC}"
     echo -e "${BLUE}========================================${NC}"
     echo "1) 带宽测速（本地+国内，自动对比）"
     echo "2) MTR 延迟/丢包 (含评价)"
