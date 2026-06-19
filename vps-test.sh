@@ -604,3 +604,5 @@ main_menu() {
 check_deps
 main_menu
 EOF
+
+chmod +x /root/vps-test.sh
