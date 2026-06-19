@@ -1,8 +1,8 @@
 cat > /root/vps-test.sh << 'EOF'
 #!/bin/bash
 # ===================================================
-# VPS 网络质量交互测试脚本 (智能解析版 v2)
-# 修复：解析失败时正确返回非零，避免空 IP
+# VPS 网络质量交互测试脚本 (智能解析版 v3)
+# 新增功能：卸载脚本（清理所有相关文件）
 # ===================================================
 
 RED='\033[0;31m'
@@ -14,56 +14,34 @@ NC='\033[0m'
 # ---------- 核心：智能解析域名 ----------
 resolve_ip() {
     local target="$1"
-    # 如果已经是 IPv4 地址，直接返回
     if [[ "$target" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         echo "$target"
         return 0
     fi
-
     local ip=""
-
-    # 尝试 dig
     if command -v dig &>/dev/null; then
         ip=$(dig +short "$target" 2>/dev/null | grep -E '^[0-9.]+$' | head -1)
-        if [ -n "$ip" ]; then
-            echo "$ip"
-            return 0
-        fi
+        [ -n "$ip" ] && { echo "$ip"; return 0; }
     fi
-
-    # 尝试 nslookup
     if command -v nslookup &>/dev/null; then
         ip=$(nslookup "$target" 2>/dev/null | grep -E 'Address: [0-9.]+$' | tail -1 | awk '{print $2}')
-        if [ -n "$ip" ]; then
-            echo "$ip"
-            return 0
-        fi
+        [ -n "$ip" ] && { echo "$ip"; return 0; }
     fi
-
-    # 尝试 host
     if command -v host &>/dev/null; then
         ip=$(host -t A "$target" 2>/dev/null | grep 'has address' | head -1 | awk '{print $4}')
-        if [ -n "$ip" ]; then
-            echo "$ip"
-            return 0
-        fi
+        [ -n "$ip" ] && { echo "$ip"; return 0; }
     fi
-
-    # 全部失败，返回非零
     return 1
 }
 
-# 获取用户输入，自动解析，失败则重试
+# 获取用户输入，自动解析
 get_target() {
     local prompt="$1"
     local default="$2"
     while true; do
         read -p "$prompt" input
         [ -z "$input" ] && [ -n "$default" ] && input="$default"
-        if [ -z "$input" ]; then
-            echo -e "${RED}输入不能为空${NC}"
-            continue
-        fi
+        [ -z "$input" ] && { echo -e "${RED}输入不能为空${NC}"; continue; }
         local ip=$(resolve_ip "$input")
         if [ $? -eq 0 ] && [ -n "$ip" ]; then
             echo "$ip"
@@ -102,7 +80,24 @@ get_speedtest_id() {
     echo $id
 }
 
-# ---------- 菜单功能（只列出 MTR 为例，其他类似但已修复）----------
+# ---------- 菜单功能 ----------
+menu_speedtest() {
+    clear
+    echo -e "${BLUE}========================================${NC}"
+    echo -e "${GREEN}🚀 测速到国内联通节点${NC}"
+    echo -e "${BLUE}========================================${NC}"
+    local id=$(get_speedtest_id)
+    if [ -z "$id" ]; then
+        echo -e "${RED}未找到联通测速节点，使用默认就近测速${NC}"
+        speedtest
+    else
+        echo -e "使用节点 ID: $id"
+        speedtest -s $id
+    fi
+    echo ""
+    read -p "按回车返回菜单..."
+}
+
 menu_mtr() {
     clear
     echo -e "${BLUE}========================================${NC}"
@@ -135,34 +130,150 @@ menu_mtr() {
     read -p "按回车返回..."
 }
 
-# 其他菜单（traceroute, ping, speedtest, full）逻辑相同，此处省略以节省篇幅，但完整脚本已包含全部
-# 实际发布时会把所有菜单都写全，下面仅示意主要修复点
+menu_traceroute() {
+    clear
+    echo -e "${BLUE}========================================${NC}"
+    echo -e "${GREEN}🗺️  路由追踪 (traceroute)${NC}"
+    echo -e "${BLUE}========================================${NC}"
+    echo "1) 沈阳联通 (202.96.69.38)"
+    echo "2) 北京联通 (123.125.0.1)"
+    echo "3) 上海联通 (210.22.70.3)"
+    echo "4) 大连联通 (202.96.64.68)"
+    echo "5) 锦州联通 (自动解析)"
+    echo "6) 手动输入 IP/域名"
+    read -p "请选择 [1-6]: " opt
+    case $opt in
+        1) target="202.96.69.38" ;;
+        2) target="123.125.0.1" ;;
+        3) target="210.22.70.3" ;;
+        4) target="202.96.64.68" ;;
+        5) target="ln-jinzhou-cu-v4.ip.zstaticcdn.com" ;;
+        6) target=$(get_target "请输入 IP 或域名: ") ;;
+        *) echo "无效" ; sleep 1 ; menu_traceroute ; return ;;
+    esac
+    local ip=$(resolve_ip "$target")
+    if [ $? -eq 0 ] && [ -n "$ip" ]; then
+        echo -e "${GREEN}解析成功: $target -> $ip${NC}"
+        echo -e "${YELLOW}Traceroute 到 $ip ...${NC}"
+        traceroute -4 -n "$ip"
+    else
+        echo -e "${RED}解析失败，请检查目标${NC}"
+    fi
+    read -p "按回车返回..."
+}
+
+menu_ping() {
+    clear
+    echo -e "${BLUE}========================================${NC}"
+    echo -e "${GREEN}🔄 持续 Ping 测试 (按 Ctrl+C 停止)${NC}"
+    echo -e "${BLUE}========================================${NC}"
+    echo "1) 沈阳联通 (202.96.69.38)"
+    echo "2) 北京联通 (123.125.0.1)"
+    echo "3) 上海联通 (210.22.70.3)"
+    echo "4) 大连联通 (202.96.64.68)"
+    echo "5) 锦州联通 (自动解析)"
+    echo "6) 手动输入 IP/域名"
+    read -p "请选择 [1-6]: " opt
+    case $opt in
+        1) target="202.96.69.38" ;;
+        2) target="123.125.0.1" ;;
+        3) target="210.22.70.3" ;;
+        4) target="202.96.64.68" ;;
+        5) target="ln-jinzhou-cu-v4.ip.zstaticcdn.com" ;;
+        6) target=$(get_target "请输入 IP 或域名: ") ;;
+        *) echo "无效" ; sleep 1 ; menu_ping ; return ;;
+    esac
+    local ip=$(resolve_ip "$target")
+    if [ $? -eq 0 ] && [ -n "$ip" ]; then
+        echo -e "${GREEN}解析成功: $target -> $ip${NC}"
+        echo -e "${YELLOW}开始 ping $ip ...${NC}"
+        ping -4 "$ip"
+    else
+        echo -e "${RED}解析失败，请检查目标${NC}"
+    fi
+    read -p "按回车返回..."
+}
+
+menu_full() {
+    clear
+    echo -e "${BLUE}========================================${NC}"
+    echo -e "${GREEN}📊 综合测试 (测速+MTR+路由)${NC}"
+    echo -e "${BLUE}========================================${NC}"
+    echo -e "${YELLOW}1. 测速到联通节点...${NC}"
+    menu_speedtest
+    echo -e "${YELLOW}2. MTR到锦州联通...${NC}"
+    local target="ln-jinzhou-cu-v4.ip.zstaticcdn.com"
+    local ip=$(resolve_ip "$target")
+    if [ $? -eq 0 ] && [ -n "$ip" ]; then
+        mtr -4 -r -c 20 -n "$ip"
+    else
+        echo -e "${RED}锦州域名解析失败，跳过${NC}"
+    fi
+    echo -e "${YELLOW}3. 路由到北京联通...${NC}"
+    traceroute -4 -n 123.125.0.1
+    echo -e "${GREEN}综合测试完成！${NC}"
+    read -p "按回车返回..."
+}
+
+# ========== 新增：卸载功能 ==========
+menu_uninstall() {
+    clear
+    echo -e "${RED}========================================${NC}"
+    echo -e "${RED}⚠️  卸载脚本 (清理所有相关文件)${NC}"
+    echo -e "${RED}========================================${NC}"
+    echo "即将删除以下文件："
+    echo "  - /root/vps-test.sh (本脚本)"
+    echo "  - /root/speedtest.log (测速日志)"
+    echo "  - /tmp/test.bin (临时测试文件)"
+    echo "  - /root/jp2ln.sh (旧版测速脚本，如有)"
+    echo ""
+    read -p "确认卸载？(y/n): " confirm
+    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+        echo -e "${GREEN}取消卸载。${NC}"
+        read -p "按回车返回..."
+        return
+    fi
+
+    # 执行删除
+    rm -f /root/vps-test.sh
+    rm -f /root/speedtest.log
+    rm -f /tmp/test.bin
+    rm -f /root/jp2ln.sh
+
+    echo -e "${GREEN}✅ 已删除所有相关文件，脚本已卸载。${NC}"
+    echo "退出终端..."
+    exit 0
+}
 
 # ---------- 主菜单 ----------
 main_menu() {
     clear
     echo -e "${BLUE}========================================${NC}"
-    echo -e "${GREEN}  VPS 网络测试 (智能解析 v2)${NC}"
+    echo -e "${GREEN}  VPS 网络测试 (智能解析 v3)${NC}"
     echo -e "${BLUE}========================================${NC}"
     echo "1) 测速到国内联通"
     echo "2) MTR 延迟/丢包"
     echo "3) 路由追踪"
     echo "4) 持续 Ping"
     echo "5) 综合测试"
-    echo "6) 退出"
-    read -p "请选择 [1-6]: " choice
+    echo "6) 卸载脚本（清理所有文件）"
+    echo "7) 退出"
+    echo -e "${BLUE}========================================${NC}"
+    read -p "请选择 [1-7]: " choice
     case $choice in
         1) menu_speedtest ;;
         2) menu_mtr ;;
         3) menu_traceroute ;;
         4) menu_ping ;;
         5) menu_full ;;
-        6) echo "bye!" ; exit 0 ;;
+        6) menu_uninstall ;;
+        7) echo "bye!" ; exit 0 ;;
         *) echo "无效" ; sleep 1 ; main_menu ;;
     esac
     main_menu
 }
 
+# 启动
 check_deps
 main_menu
 EOF
