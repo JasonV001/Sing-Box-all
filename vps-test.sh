@@ -1,8 +1,8 @@
 cat > /root/vps-test.sh << 'EOF'
 #!/bin/bash
 # ===================================================
-# VPS 网络质量交互测试脚本 (v14 - 手动选择国内节点)
-# 修改：菜单1第二步改为选择城市+运营商，支持联通/移动/电信
+# VPS 网络质量交互测试脚本 (v16 - 本地测速缓存)
+# 新增：首次测速后缓存结果，下次可选择跳过本地测速
 # ===================================================
 
 RED='\033[0;31m'
@@ -107,14 +107,17 @@ run_speedtest() {
     return 0
 }
 
-# ---------- 获取节点ID（支持城市和运营商） ----------
+# ---------- 获取节点ID（增强版） ----------
 get_node_id() {
     local city="$1"
     local isp="$2"
-    if [ -z "$isp" ]; then
-        isp="china unicom"  # 默认联通
-    fi
-    speedtest --servers 2>/dev/null | grep -i "$city" | grep -i "$isp" | head -1 | awk '{print $1}'
+    local id=$(speedtest --servers 2>/dev/null | grep -i "$city" | grep -i "$isp" | head -1 | awk '{print $1}')
+    if [ -n "$id" ]; then echo "$id"; return 0; fi
+    id=$(speedtest --servers 2>/dev/null | grep -i "$city" | head -1 | awk '{print $1}')
+    if [ -n "$id" ]; then echo "$id"; return 0; fi
+    id=$(speedtest --servers 2>/dev/null | grep -i "$isp" | head -1 | awk '{print $1}')
+    if [ -n "$id" ]; then echo "$id"; return 0; fi
+    return 1
 }
 
 # ---------- 智能解析域名 ----------
@@ -199,24 +202,58 @@ parse_mtr() {
     echo "$avg"; echo "$loss"; return 0
 }
 
-# ---------- 菜单1：集成测速（本地+国内） ----------
+# ---------- 菜单1：集成测速（支持本地缓存） ----------
 menu_speedtest() {
     clear
     echo -e "${BLUE}========================================${NC}"
     echo -e "${GREEN}🚀 带宽测速（先测本地，再测国内，自动对比）${NC}"
     echo -e "${BLUE}========================================${NC}"
-    echo -e "${YELLOW}第一步：测本地带宽（最近节点）...${NC}"
-    local local_result=$(run_speedtest "")
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}本地测速失败，请检查网络${NC}"
-        read -p "按回车返回..."
-        return
+    
+    local local_dl local_ul local_server
+    local local_result_file="/tmp/local_speed_result.txt"
+    
+    # 检查是否有上次的本地测速记录
+    if [ -f "$local_result_file" ] && [ -s "$local_result_file" ]; then
+        # 读取上次记录
+        read local_dl local_ul local_server < "$local_result_file"
+        echo -e "${YELLOW}检测到上次本地测速结果：${NC}"
+        echo -e "下载: ${local_dl} Mbps, 上传: ${local_ul} Mbps (节点: ${local_server})"
+        read -p "是否跳过本次本地测速，直接使用上次结果？(y/n, 默认y): " skip_local
+        skip_local=${skip_local:-y}
+        if [[ "$skip_local" == "y" || "$skip_local" == "Y" ]]; then
+            echo -e "${GREEN}使用上次本地测速结果。${NC}"
+            evaluate_speed "本地" "$local_dl" "$local_ul" "$local_server"
+        else
+            echo -e "${YELLOW}重新测速本地带宽...${NC}"
+            local_result=$(run_speedtest "")
+            if [ $? -ne 0 ]; then
+                echo -e "${RED}本地测速失败，请检查网络${NC}"
+                read -p "按回车返回..."
+                return
+            fi
+            local_dl=$(echo "$local_result" | awk '{print $1}')
+            local_ul=$(echo "$local_result" | awk '{print $2}')
+            local_server=$(echo "$local_result" | cut -d' ' -f3-)
+            echo "$local_dl $local_ul $local_server" > "$local_result_file"
+            evaluate_speed "本地" "$local_dl" "$local_ul" "$local_server"
+        fi
+    else
+        # 无记录，正常测速
+        echo -e "${YELLOW}第一步：测本地带宽（最近节点）...${NC}"
+        local_result=$(run_speedtest "")
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}本地测速失败，请检查网络${NC}"
+            read -p "按回车返回..."
+            return
+        fi
+        local_dl=$(echo "$local_result" | awk '{print $1}')
+        local_ul=$(echo "$local_result" | awk '{print $2}')
+        local_server=$(echo "$local_result" | cut -d' ' -f3-)
+        echo "$local_dl $local_ul $local_server" > "$local_result_file"
+        evaluate_speed "本地" "$local_dl" "$local_ul" "$local_server"
     fi
-    local local_dl=$(echo "$local_result" | awk '{print $1}')
-    local local_ul=$(echo "$local_result" | awk '{print $2}')
-    local local_server=$(echo "$local_result" | cut -d' ' -f3-)
-    evaluate_speed "本地" "$local_dl" "$local_ul" "$local_server"
 
+    # ------------------ 第二步：选择国内节点 ------------------
     echo -e "${YELLOW}\n第二步：选择国内测速节点 (运营商+城市)${NC}"
     echo "  联通节点:"
     echo "    1) 北京联通    2) 上海联通    3) 广州联通"
@@ -227,8 +264,12 @@ menu_speedtest() {
     echo "    9) 北京电信   10) 上海电信   11) 广州电信"
     echo " 12) 手动输入城市和运营商 (如: shenyang unicom)"
     echo " 13) 自动 (不推荐，可能测到日本)"
-    read -p "请选择 [1-13] (默认1): " opt
+    echo "  0) 返回主菜单"
+    read -p "请选择 [0-13] (默认1): " opt
     opt=${opt:-1}
+    if [ "$opt" == "0" ]; then
+        return
+    fi
     local id=""
     local desc=""
     case $opt in
@@ -244,19 +285,20 @@ menu_speedtest() {
        10) id=$(get_node_id "shanghai" "china telecom"); desc="上海电信" ;;
        11) id=$(get_node_id "guangzhou" "china telecom"); desc="广州电信" ;;
        12) read -p "请输入城市和运营商 (如: shenyang unicom): " custom; id=$(get_node_id "$custom"); desc="自定义 ($custom)" ;;
-       13) id=""; desc="自动 (可能测到日本)" ;;
+       13) id=""; desc="自动 (不推荐)" ;;
        *) echo "无效" ; sleep 1 ; menu_speedtest ; return ;;
     esac
 
     if [ -z "$id" ] && [ "$opt" != "13" ]; then
-        echo -e "${YELLOW}未找到对应节点，使用自动测速${NC}"
-        id=""
-        desc="自动 (查找失败)"
+        echo -e "${RED}❌ 未找到对应节点，请检查城市/运营商名称是否正确。${NC}"
+        echo -e "${YELLOW}提示：你可以选 12 手动输入，例如 shenyang unicom${NC}"
+        read -p "按回车返回..."
+        return
     fi
     if [ -n "$id" ]; then
         echo -e "${YELLOW}使用节点 ID: $id (${desc})${NC}"
     else
-        echo -e "${YELLOW}使用默认就近测速${NC}"
+        echo -e "${YELLOW}使用默认就近测速 (可能测到日本)${NC}"
     fi
 
     local cn_result=$(run_speedtest "$id")
@@ -430,9 +472,15 @@ menu_uninstall() {
     echo -e "${RED}========================================${NC}"
     echo -e "${RED}⚠️  卸载脚本${NC}"
     echo -e "${RED}========================================${NC}"
+    echo "即将删除："
+    echo "  - /root/vps-test.sh (本脚本)"
+    echo "  - /tmp/local_speed_result.txt (本地测速缓存)"
+    echo "  - /root/speedtest.log (测速日志)"
+    echo "  - /tmp/test.bin (临时测试文件)"
+    echo "  - /root/jp2ln.sh (旧版测速脚本)"
     read -p "确认卸载？(y/n): " confirm
     if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
-        rm -f /root/vps-test.sh /root/speedtest.log /tmp/test.bin /root/jp2ln.sh
+        rm -f /root/vps-test.sh /root/speedtest.log /tmp/test.bin /root/jp2ln.sh /tmp/local_speed_result.txt
         echo -e "${GREEN}✅ 已清理。${NC}"
         exit 0
     else
@@ -445,7 +493,7 @@ menu_uninstall() {
 main_menu() {
     clear
     echo -e "${BLUE}========================================${NC}"
-    echo -e "${GREEN}  VPS 网络测试 (v14 - 手动选择国内节点)${NC}"
+    echo -e "${GREEN}  VPS 网络测试 (v16 - 本地测速缓存)${NC}"
     echo -e "${BLUE}========================================${NC}"
     echo "1) 带宽测速（本地+国内，自动对比）"
     echo "2) MTR 延迟/丢包 (含评价)"
