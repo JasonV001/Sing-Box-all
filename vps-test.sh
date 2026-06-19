@@ -1,8 +1,8 @@
 cat > /root/vps-test.sh << 'EOF'
 #!/bin/bash
 # ===================================================
-# VPS 网络质量交互测试脚本 (v11 - 集成测速流程)
-# 菜单1：先测本地带宽，再测国内，自动对比评价
+# VPS 网络质量交互测试脚本 (v12 - 显示测速节点)
+# 新增：在测速结果中显示服务器名称/节点信息
 # ===================================================
 
 RED='\033[0;31m'
@@ -38,10 +38,14 @@ evaluate_speed() {
     local test_type="$1"
     local download="$2"
     local upload="$3"
+    local server_info="$4"
     echo ""
     echo -e "${BLUE}========================================${NC}"
     echo -e "${BOLD}📊 ${test_type}带宽测速结果${NC}"
     echo -e "${BLUE}========================================${NC}"
+    if [ -n "$server_info" ]; then
+        echo -e "📌 测速节点: ${server_info}"
+    fi
     echo -e "下载速度: ${download} Mbps  |  上传速度: ${upload} Mbps"
     if [[ -z "$download" || "$download" == "0" ]]; then
         echo -e "${RED}❌ 无法获取有效速度数据${NC}"
@@ -58,12 +62,13 @@ evaluate_speed() {
 evaluate_combined() {
     local local_dl="$1"
     local cn_dl="$2"
+    local cn_server="$3"
     echo ""
     echo -e "${BLUE}========================================${NC}"
     echo -e "${BOLD}📊 综合对比评价${NC}"
     echo -e "${BLUE}========================================${NC}"
     echo -e "📌 本地带宽 (VPS上限): ${local_dl} Mbps"
-    echo -e "📌 国内测速 (到联通): ${cn_dl} Mbps"
+    echo -e "📌 国内测速 (到 ${cn_server}): ${cn_dl} Mbps"
     if [[ -z "$local_dl" || -z "$cn_dl" ]]; then
         echo -e "${RED}数据不完整，无法评价${NC}"
     elif (( $(echo "$cn_dl > 500" | bc -l 2>/dev/null) )); then
@@ -76,7 +81,7 @@ evaluate_combined() {
     echo -e "${BLUE}========================================${NC}"
 }
 
-# ---------- 解析 Speedtest 文本输出 ----------
+# ---------- 解析 Speedtest 文本输出（返回 下载 上传 服务器信息） ----------
 run_speedtest() {
     local id="$1"
     local output_file="/tmp/speedtest_output.txt"
@@ -93,8 +98,13 @@ run_speedtest() {
     fi
     local download=$(grep -i "Download:" "$output_file" | tail -1 | sed -E 's/.*Download:[[:space:]]*([0-9.]+).*/\1/')
     local upload=$(grep -i "Upload:" "$output_file" | tail -1 | sed -E 's/.*Upload:[[:space:]]*([0-9.]+).*/\1/')
+    # 提取服务器信息 (第一行 Server: 或含 (id: 的行)
+    local server=$(grep -i "Server:" "$output_file" | head -1 | sed -E 's/^[[:space:]]*Server:[[:space:]]*//')
+    if [ -z "$server" ]; then
+        server="未知节点"
+    fi
     rm -f "$output_file"
-    echo "$download $upload"
+    echo "$download $upload $server"
     return 0
 }
 
@@ -186,7 +196,7 @@ parse_mtr() {
     echo "$avg"; echo "$loss"; return 0
 }
 
-# ---------- 菜单1：集成测速（本地+国内，自动对比） ----------
+# ---------- 菜单1：集成测速（本地+国内） ----------
 menu_speedtest() {
     clear
     echo -e "${BLUE}========================================${NC}"
@@ -201,7 +211,8 @@ menu_speedtest() {
     fi
     local local_dl=$(echo "$local_result" | awk '{print $1}')
     local local_ul=$(echo "$local_result" | awk '{print $2}')
-    evaluate_speed "本地" "$local_dl" "$local_ul"
+    local local_server=$(echo "$local_result" | cut -d' ' -f3-)
+    evaluate_speed "本地" "$local_dl" "$local_ul" "$local_server"
 
     echo -e "${YELLOW}\n第二步：选择国内联通节点测速${NC}"
     echo "1) 沈阳联通  2) 大连联通  3) 北京联通  4) 上海联通  5) 自动选择"
@@ -230,9 +241,10 @@ menu_speedtest() {
     fi
     local cn_dl=$(echo "$cn_result" | awk '{print $1}')
     local cn_ul=$(echo "$cn_result" | awk '{print $2}')
-    evaluate_speed "国内" "$cn_dl" "$cn_ul"
+    local cn_server=$(echo "$cn_result" | cut -d' ' -f3-)
+    evaluate_speed "国内" "$cn_dl" "$cn_ul" "$cn_server"
 
-    evaluate_combined "$local_dl" "$cn_dl"
+    evaluate_combined "$local_dl" "$cn_dl" "$cn_server"
     read -p "按回车返回..."
 }
 
@@ -407,7 +419,7 @@ menu_uninstall() {
 main_menu() {
     clear
     echo -e "${BLUE}========================================${NC}"
-    echo -e "${GREEN}  VPS 网络测试 (v11 - 集成测速)${NC}"
+    echo -e "${GREEN}  VPS 网络测试 (v12 - 显示测速节点)${NC}"
     echo -e "${BLUE}========================================${NC}"
     echo "1) 带宽测速（本地+国内，自动对比）"
     echo "2) MTR 延迟/丢包 (含评价)"
