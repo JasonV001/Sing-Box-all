@@ -1,8 +1,8 @@
 cat > /root/vps-test.sh << 'EOF'
 #!/bin/bash
 # ===================================================
-# VPS 网络质量交互测试脚本 (智能解析版 v3)
-# 新增功能：卸载脚本（清理所有相关文件）
+# VPS 网络质量交互测试脚本 (智能解析版 v4)
+# 修复：强制安装 DNS 工具，确保域名解析成功
 # ===================================================
 
 RED='\033[0;31m'
@@ -14,21 +14,31 @@ NC='\033[0m'
 # ---------- 核心：智能解析域名 ----------
 resolve_ip() {
     local target="$1"
+    # 如果已经是 IPv4 地址，直接返回
     if [[ "$target" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         echo "$target"
         return 0
     fi
+
     local ip=""
+    # 优先使用 dig
     if command -v dig &>/dev/null; then
         ip=$(dig +short "$target" 2>/dev/null | grep -E '^[0-9.]+$' | head -1)
         [ -n "$ip" ] && { echo "$ip"; return 0; }
     fi
+    # 其次 nslookup
     if command -v nslookup &>/dev/null; then
         ip=$(nslookup "$target" 2>/dev/null | grep -E 'Address: [0-9.]+$' | tail -1 | awk '{print $2}')
         [ -n "$ip" ] && { echo "$ip"; return 0; }
     fi
+    # 备胎 host
     if command -v host &>/dev/null; then
         ip=$(host -t A "$target" 2>/dev/null | grep 'has address' | head -1 | awk '{print $4}')
+        [ -n "$ip" ] && { echo "$ip"; return 0; }
+    fi
+    # 最后用 getent（glibc 自带）
+    if command -v getent &>/dev/null; then
+        ip=$(getent ahosts "$target" 2>/dev/null | grep -E '^[0-9.]+' | head -1 | awk '{print $1}')
         [ -n "$ip" ] && { echo "$ip"; return 0; }
     fi
     return 1
@@ -52,14 +62,25 @@ get_target() {
     done
 }
 
-# ---------- 依赖检查 ----------
+# ---------- 依赖检查（已添加 DNS 工具） ----------
 check_deps() {
+    # 基础网络工具
     for dep in curl mtr traceroute; do
         if ! command -v $dep &>/dev/null; then
             echo -e "${YELLOW}安装 $dep ...${NC}"
             apt update -y && apt install -y $dep >/dev/null 2>&1 || yum install -y $dep >/dev/null 2>&1
         fi
     done
+    # DNS 解析工具（关键）
+    if ! command -v nslookup &>/dev/null && ! command -v dig &>/dev/null; then
+        echo -e "${YELLOW}安装 DNS 工具 (dnsutils/bind-utils) ...${NC}"
+        if [[ -f /etc/debian_version ]]; then
+            apt update -y && apt install -y dnsutils >/dev/null 2>&1
+        else
+            yum install -y bind-utils >/dev/null 2>&1
+        fi
+    fi
+    # Speedtest CLI
     if ! command -v speedtest &>/dev/null || ! speedtest --version | grep -q "ookla"; then
         echo -e "${YELLOW}安装 Ookla Speedtest ...${NC}"
         if [[ -f /etc/debian_version ]]; then
@@ -80,7 +101,10 @@ get_speedtest_id() {
     echo $id
 }
 
-# ---------- 菜单功能 ----------
+# ---------- 菜单功能（此处省略详细实现，与之前一致，但全部使用新的解析逻辑）----------
+# 为了节省篇幅，所有菜单函数沿用之前版本，但解析调用均已更新
+# 实际脚本中会包含全部完整函数，下面仅列出主菜单和卸载
+
 menu_speedtest() {
     clear
     echo -e "${BLUE}========================================${NC}"
@@ -215,7 +239,7 @@ menu_full() {
     read -p "按回车返回..."
 }
 
-# ========== 新增：卸载功能 ==========
+# 卸载功能
 menu_uninstall() {
     clear
     echo -e "${RED}========================================${NC}"
@@ -233,15 +257,11 @@ menu_uninstall() {
         read -p "按回车返回..."
         return
     fi
-
-    # 执行删除
     rm -f /root/vps-test.sh
     rm -f /root/speedtest.log
     rm -f /tmp/test.bin
     rm -f /root/jp2ln.sh
-
     echo -e "${GREEN}✅ 已删除所有相关文件，脚本已卸载。${NC}"
-    echo "退出终端..."
     exit 0
 }
 
@@ -249,14 +269,14 @@ menu_uninstall() {
 main_menu() {
     clear
     echo -e "${BLUE}========================================${NC}"
-    echo -e "${GREEN}  VPS 网络测试 (智能解析 v3)${NC}"
+    echo -e "${GREEN}  VPS 网络测试 (智能解析 v4)${NC}"
     echo -e "${BLUE}========================================${NC}"
     echo "1) 测速到国内联通"
     echo "2) MTR 延迟/丢包"
     echo "3) 路由追踪"
     echo "4) 持续 Ping"
     echo "5) 综合测试"
-    echo "6) 卸载脚本（清理所有文件）"
+    echo "6) 卸载脚本"
     echo "7) 退出"
     echo -e "${BLUE}========================================${NC}"
     read -p "请选择 [1-7]: " choice
