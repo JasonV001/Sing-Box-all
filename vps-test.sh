@@ -1,8 +1,9 @@
 cat > /root/vps-test.sh << 'EOF'
 #!/bin/bash
 # ===================================================
-# VPS 网络质量交互测试脚本 (智能解析 + 自动评价)
-# 功能：测速、MTR、Ping、路由，并自动给出结论
+# VPS 网络质量交互测试脚本 (v5 - 修复字段+bc)
+# 功能：测速、MTR、Ping、路由，并自动给出评价
+# 修复：正确提取丢包率(第3列)和平均延迟(第6列)，安装bc
 # ===================================================
 
 RED='\033[0;31m'
@@ -17,7 +18,6 @@ evaluate_result() {
     local target_name="$1"
     local avg="$2"
     local loss="$3"
-    local is_ping="$4"  # 1表示ping，0表示mtr
 
     echo ""
     echo -e "${BLUE}========================================${NC}"
@@ -25,13 +25,13 @@ evaluate_result() {
     echo -e "${BLUE}========================================${NC}"
     echo -e "平均延迟: ${avg}ms  |  丢包率: ${loss}%"
 
-    # 判断标准
-    if [[ -z "$avg" || -z "$loss" ]]; then
+    # 检查是否有有效数值
+    if [[ -z "$avg" || -z "$loss" || "$avg" == "?" || "$loss" == "?" ]]; then
         echo -e "${RED}❌ 无法获取有效数据，请检查网络。${NC}"
-    elif (( $(echo "$avg < 80" | bc -l) )) && (( $(echo "$loss < 2" | bc -l) )); then
+    elif (( $(echo "$avg < 80" | bc -l 2>/dev/null) )) && (( $(echo "$loss < 2" | bc -l 2>/dev/null) )); then
         echo -e "${GREEN}${BOLD}✅ 线路评级：优秀 (★★★★★)${NC}"
         echo -e "${GREEN}延迟极低，无丢包，非常适合建站/游戏。${NC}"
-    elif (( $(echo "$avg < 120" | bc -l) )) && (( $(echo "$loss < 5" | bc -l) )); then
+    elif (( $(echo "$avg < 120" | bc -l 2>/dev/null) )) && (( $(echo "$loss < 5" | bc -l 2>/dev/null) )); then
         echo -e "${YELLOW}${BOLD}⚠️  线路评级：良好 (★★★☆☆)${NC}"
         echo -e "${YELLOW}延迟正常，丢包在可接受范围，日常使用无压力。${NC}"
     else
@@ -41,7 +41,7 @@ evaluate_result() {
     echo -e "${BLUE}========================================${NC}"
 }
 
-# 从 MTR 输出中提取最后一跳的平均延迟和丢包率
+# ---------- 从 MTR 输出中提取最后一跳的平均延迟和丢包率 ----------
 parse_mtr() {
     local result_file="$1"
     # 找到最后一个有效跳（不包含 ??? 且不是 100% 丢包）
@@ -51,15 +51,15 @@ parse_mtr() {
         echo ""
         return 1
     fi
-    # 提取丢包率（第2列）和平均延迟（第5列）
-    local loss=$(echo "$last_line" | awk '{print $2}' | sed 's/%//')
-    local avg=$(echo "$last_line" | awk '{print $5}')
+    # 字段：$1="数字.|--", $2="IP", $3="丢包率%", $4="Snt", $5="Last", $6="Avg", $7="Best", $8="Wrst", $9="StDev"
+    local loss=$(echo "$last_line" | awk '{print $3}' | sed 's/%//')
+    local avg=$(echo "$last_line" | awk '{print $6}')
     echo "$avg"
     echo "$loss"
     return 0
 }
 
-# ---------- 核心：智能解析域名（同前） ----------
+# ---------- 核心：智能解析域名 ----------
 resolve_ip() {
     local target="$1"
     if [[ "$target" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -105,12 +105,14 @@ get_target() {
 
 # ---------- 依赖检查 ----------
 check_deps() {
-    for dep in curl mtr traceroute; do
+    # 基础网络工具
+    for dep in curl mtr traceroute bc; do
         if ! command -v $dep &>/dev/null; then
             echo -e "${YELLOW}安装 $dep ...${NC}"
             apt update -y && apt install -y $dep >/dev/null 2>&1 || yum install -y $dep >/dev/null 2>&1
         fi
     done
+    # DNS 工具
     if ! command -v nslookup &>/dev/null && ! command -v dig &>/dev/null; then
         echo -e "${YELLOW}安装 DNS 工具 ...${NC}"
         if [[ -f /etc/debian_version ]]; then
@@ -119,6 +121,7 @@ check_deps() {
             yum install -y bind-utils >/dev/null 2>&1
         fi
     fi
+    # Speedtest CLI
     if ! command -v speedtest &>/dev/null || ! speedtest --version | grep -q "ookla"; then
         echo -e "${YELLOW}安装 Ookla Speedtest ...${NC}"
         if [[ -f /etc/debian_version ]]; then
@@ -139,7 +142,7 @@ get_speedtest_id() {
     echo $id
 }
 
-# ---------- 菜单功能（含自动评价） ----------
+# ---------- 菜单功能 ----------
 menu_speedtest() {
     clear
     echo -e "${BLUE}========================================${NC}"
@@ -189,7 +192,6 @@ menu_mtr() {
     mtr -4 -r -c 20 -n "$ip" > /tmp/mtr_result
     cat /tmp/mtr_result
 
-    # 解析并评价
     local avg=$(parse_mtr "/tmp/mtr_result" | head -1)
     local loss=$(parse_mtr "/tmp/mtr_result" | tail -1)
     if [ -n "$avg" ] && [ -n "$loss" ]; then
@@ -306,7 +308,7 @@ menu_full() {
     read -p "按回车返回..."
 }
 
-# 卸载功能（同前）
+# 卸载功能
 menu_uninstall() {
     clear
     echo -e "${RED}========================================${NC}"
@@ -328,7 +330,7 @@ menu_uninstall() {
 main_menu() {
     clear
     echo -e "${BLUE}========================================${NC}"
-    echo -e "${GREEN}  VPS 网络测试 (自动评价版)${NC}"
+    echo -e "${GREEN}  VPS 网络测试 (自动评价版 v5)${NC}"
     echo -e "${BLUE}========================================${NC}"
     echo "1) 测速到国内联通"
     echo "2) MTR 延迟/丢包 (含评价)"
