@@ -1,8 +1,8 @@
 cat > /root/vps-test.sh << 'EOF'
 #!/bin/bash
 # ===================================================
-# VPS 网络质量交互测试脚本 (v7 - 支持选择测速节点)
-# 功能：测速时可选择沈阳/大连/北京/上海等联通节点
+# VPS 网络质量交互测试脚本 (v11 - 集成测速流程)
+# 菜单1：先测本地带宽，再测国内，自动对比评价
 # ===================================================
 
 RED='\033[0;31m'
@@ -35,53 +35,67 @@ evaluate_latency() {
 }
 
 evaluate_speed() {
-    local download="$1"
-    local upload="$2"
+    local test_type="$1"
+    local download="$2"
+    local upload="$3"
     echo ""
     echo -e "${BLUE}========================================${NC}"
-    echo -e "${BOLD}📊 带宽测速评价${NC}"
+    echo -e "${BOLD}📊 ${test_type}带宽测速结果${NC}"
     echo -e "${BLUE}========================================${NC}"
     echo -e "下载速度: ${download} Mbps  |  上传速度: ${upload} Mbps"
     if [[ -z "$download" || "$download" == "0" ]]; then
         echo -e "${RED}❌ 无法获取有效速度数据${NC}"
     elif (( $(echo "$download > 500" | bc -l 2>/dev/null) )); then
         echo -e "${GREEN}${BOLD}✅ 带宽评级：极速 (★★★★★)${NC}"
-        echo -e "${GREEN}带宽非常充足，跑满G口，硬件无超售。${NC}"
     elif (( $(echo "$download > 100" | bc -l 2>/dev/null) )); then
         echo -e "${YELLOW}${BOLD}⚠️  带宽评级：良好 (★★★☆☆)${NC}"
-        echo -e "${YELLOW}正常水平，看4K/日常使用绰绰有余。${NC}"
     else
-        echo -e "${RED}${BOLD}❌ 带宽评级：较差 (★☆☆☆☆)${NC}"
-        echo -e "${RED}带宽较低，可能是商家限制或线路拥堵。${NC}"
+        echo -e "${RED}${BOLD}❌ 带宽评级：较低 (★☆☆☆☆)${NC}"
     fi
     echo -e "${BLUE}========================================${NC}"
 }
 
-# ---------- 解析 Speedtest JSON ----------
+evaluate_combined() {
+    local local_dl="$1"
+    local cn_dl="$2"
+    echo ""
+    echo -e "${BLUE}========================================${NC}"
+    echo -e "${BOLD}📊 综合对比评价${NC}"
+    echo -e "${BLUE}========================================${NC}"
+    echo -e "📌 本地带宽 (VPS上限): ${local_dl} Mbps"
+    echo -e "📌 国内测速 (到联通): ${cn_dl} Mbps"
+    if [[ -z "$local_dl" || -z "$cn_dl" ]]; then
+        echo -e "${RED}数据不完整，无法评价${NC}"
+    elif (( $(echo "$cn_dl > 500" | bc -l 2>/dev/null) )); then
+        echo -e "${GREEN}${BOLD}✅ 国内速度极佳，几乎跑满本地带宽，线路非常优秀！${NC}"
+    elif (( $(echo "$cn_dl > 100" | bc -l 2>/dev/null) )); then
+        echo -e "${YELLOW}${BOLD}⚠️  国内速度良好，但未完全跑满本地带宽，可能存在轻微拥堵。${NC}"
+    else
+        echo -e "${RED}${BOLD}❌ 国内速度远低于本地带宽，线路严重拥堵或运营商限速。${NC}"
+    fi
+    echo -e "${BLUE}========================================${NC}"
+}
+
+# ---------- 解析 Speedtest 文本输出 ----------
 run_speedtest() {
     local id="$1"
-    local output_file="/tmp/speedtest_result.json"
+    local output_file="/tmp/speedtest_output.txt"
     if [ -n "$id" ]; then
-        echo -e "${YELLOW}使用节点 ID: $id${NC}"
-        speedtest -s "$id" --format=json-pretty > "$output_file" 2>/dev/null
+        speedtest -s "$id" > "$output_file" 2>&1
     else
-        echo -e "${YELLOW}使用默认就近测速${NC}"
-        speedtest --format=json-pretty > "$output_file" 2>/dev/null
+        speedtest > "$output_file" 2>&1
     fi
     if [ $? -ne 0 ] || [ ! -s "$output_file" ]; then
-        echo -e "${RED}测速失败，请检查网络或重试${NC}"
+        echo -e "${RED}测速失败${NC}" >&2
+        cat "$output_file" >&2
+        rm -f "$output_file"
         return 1
     fi
-    local download=$(grep '"download"' "$output_file" | head -1 | awk '{print $2}' | sed 's/[^0-9.]//g')
-    local upload=$(grep '"upload"' "$output_file" | head -1 | awk '{print $2}' | sed 's/[^0-9.]//g')
-    if [ -n "$download" ] && [ -n "$upload" ]; then
-        download=$(echo "scale=2; $download / 1000000" | bc -l 2>/dev/null)
-        upload=$(echo "scale=2; $upload / 1000000" | bc -l 2>/dev/null)
-        evaluate_speed "$download" "$upload"
-    else
-        echo -e "${RED}解析速度数据失败${NC}"
-    fi
+    local download=$(grep -i "Download:" "$output_file" | tail -1 | sed -E 's/.*Download:[[:space:]]*([0-9.]+).*/\1/')
+    local upload=$(grep -i "Upload:" "$output_file" | tail -1 | sed -E 's/.*Upload:[[:space:]]*([0-9.]+).*/\1/')
     rm -f "$output_file"
+    echo "$download $upload"
+    return 0
 }
 
 # ---------- 获取节点ID ----------
@@ -172,20 +186,27 @@ parse_mtr() {
     echo "$avg"; echo "$loss"; return 0
 }
 
-# ---------- 菜单：测速（带节点选择） ----------
+# ---------- 菜单1：集成测速（本地+国内，自动对比） ----------
 menu_speedtest() {
     clear
     echo -e "${BLUE}========================================${NC}"
-    echo -e "${GREEN}🚀 测速到国内联通节点 (自动评价)${NC}"
+    echo -e "${GREEN}🚀 带宽测速（先测本地，再测国内，自动对比）${NC}"
     echo -e "${BLUE}========================================${NC}"
-    echo "请选择测试节点："
-    echo "1) 沈阳联通 (自动查找)"
-    echo "2) 大连联通 (自动查找)"
-    echo "3) 北京联通 (自动查找)"
-    echo "4) 上海联通 (自动查找)"
-    echo "5) 自动选择 (默认最近)"
-    echo "6) 手动输入节点ID"
-    read -p "请输入选项 [1-6]: " opt
+    echo -e "${YELLOW}第一步：测本地带宽（最近节点）...${NC}"
+    local local_result=$(run_speedtest "")
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}本地测速失败，请检查网络${NC}"
+        read -p "按回车返回..."
+        return
+    fi
+    local local_dl=$(echo "$local_result" | awk '{print $1}')
+    local local_ul=$(echo "$local_result" | awk '{print $2}')
+    evaluate_speed "本地" "$local_dl" "$local_ul"
+
+    echo -e "${YELLOW}\n第二步：选择国内联通节点测速${NC}"
+    echo "1) 沈阳联通  2) 大连联通  3) 北京联通  4) 上海联通  5) 自动选择"
+    read -p "请输入选项 [1-5] (默认5): " opt
+    opt=${opt:-5}
     local id=""
     case $opt in
         1) id=$(get_node_id "shenyang") ;;
@@ -193,23 +214,29 @@ menu_speedtest() {
         3) id=$(get_node_id "beijing") ;;
         4) id=$(get_node_id "shanghai") ;;
         5) id="" ;;
-        6) read -p "请输入节点ID (如 5145): " id ;;
-        *) echo "无效选项"; sleep 1; menu_speedtest; return ;;
+        *) echo "无效，使用自动"; id="" ;;
     esac
     if [ -n "$id" ]; then
-        run_speedtest "$id"
+        echo -e "${YELLOW}使用节点 ID: $id${NC}"
     else
-        if [ "$opt" -eq 5 ] || [ -z "$id" ]; then
-            run_speedtest ""
-        else
-            echo -e "${RED}未找到对应节点，使用默认测速${NC}"
-            run_speedtest ""
-        fi
+        echo -e "${YELLOW}使用默认就近测速${NC}"
     fi
+
+    local cn_result=$(run_speedtest "$id")
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}国内测速失败${NC}"
+        read -p "按回车返回..."
+        return
+    fi
+    local cn_dl=$(echo "$cn_result" | awk '{print $1}')
+    local cn_ul=$(echo "$cn_result" | awk '{print $2}')
+    evaluate_speed "国内" "$cn_dl" "$cn_ul"
+
+    evaluate_combined "$local_dl" "$cn_dl"
     read -p "按回车返回..."
 }
 
-# ---------- 其余菜单 ----------
+# ---------- 菜单2：MTR ----------
 menu_mtr() {
     clear
     echo -e "${BLUE}========================================${NC}"
@@ -252,6 +279,7 @@ menu_mtr() {
     read -p "按回车返回..."
 }
 
+# ---------- 菜单3：路由追踪 ----------
 menu_traceroute() {
     clear
     echo -e "${BLUE}========================================${NC}"
@@ -284,6 +312,7 @@ menu_traceroute() {
     read -p "按回车返回..."
 }
 
+# ---------- 菜单4：持续Ping ----------
 menu_ping() {
     clear
     echo -e "${BLUE}========================================${NC}"
@@ -325,6 +354,7 @@ menu_ping() {
     read -p "按回车返回..."
 }
 
+# ---------- 菜单5：综合测试 ----------
 menu_full() {
     clear
     echo -e "${BLUE}========================================${NC}"
@@ -356,6 +386,7 @@ menu_full() {
     read -p "按回车返回..."
 }
 
+# ---------- 菜单6：卸载 ----------
 menu_uninstall() {
     clear
     echo -e "${RED}========================================${NC}"
@@ -376,13 +407,13 @@ menu_uninstall() {
 main_menu() {
     clear
     echo -e "${BLUE}========================================${NC}"
-    echo -e "${GREEN}  VPS 网络测试 (v7 - 可选测速节点)${NC}"
+    echo -e "${GREEN}  VPS 网络测试 (v11 - 集成测速)${NC}"
     echo -e "${BLUE}========================================${NC}"
-    echo "1) 测速到国内联通 (可选节点)"
+    echo "1) 带宽测速（本地+国内，自动对比）"
     echo "2) MTR 延迟/丢包 (含评价)"
     echo "3) 路由追踪"
     echo "4) 持续 Ping (含评价)"
-    echo "5) 综合测试 (含评价)"
+    echo "5) 综合测试 (测速+MTR+路由)"
     echo "6) 卸载脚本"
     echo "7) 退出"
     echo -e "${BLUE}========================================${NC}"
