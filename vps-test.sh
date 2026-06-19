@@ -545,4 +545,62 @@ menu_full() {
     fi
     echo -e "${YELLOW}3. 路由到北京联通...${NC}"
     traceroute -4 -n 123.125.0.1
-    echo -e "${G
+    echo -e "${GREEN}综合测试完成！${NC}"
+    read -p "按回车返回..."
+}
+
+# ---------- 菜单6：卸载 ----------
+menu_uninstall() {
+    clear
+    echo -e "${RED}========================================${NC}"
+    echo -e "${RED}⚠️  卸载脚本${NC}"
+    echo -e "${RED}========================================${NC}"
+    echo "即将删除："
+    echo "  - /root/vps-test.sh (本脚本)"
+    echo "  - /tmp/local_speed_result.txt (本地测速缓存)"
+    echo "  - /root/speedtest.log (测速日志)"
+    echo "  - /tmp/test.bin (临时测试文件)"
+    echo "  - /root/jp2ln.sh (旧版测速脚本)"
+    read -p "确认卸载？(y/n): " confirm
+    if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
+        rm -f /root/vps-test.sh /root/speedtest.log /tmp/test.bin /root/jp2ln.sh /tmp/local_speed_result.txt /tmp/vps_test_deps_installed
+        echo -e "${GREEN}✅ 已清理。${NC}"
+        exit 0
+    else
+        echo -e "${GREEN}取消。${NC}"
+        read -p "按回车返回..."
+    fi
+}
+
+# ---------- 主菜单 ----------
+main_menu() {
+    clear
+    echo -e "${BLUE}========================================${NC}"
+    echo -e "${GREEN}  VPS 网络测试 (v20 - 完整版)${NC}"
+    echo -e "${BLUE}========================================${NC}"
+    echo "1) 带宽测速（本地+国内，自动对比）"
+    echo "2) MTR 延迟/丢包 (含评价)"
+    echo "3) 路由追踪"
+    echo "4) 持续 Ping (含评价)"
+    echo "5) 综合测试 (测速+MTR+路由)"
+    echo "6) 卸载脚本"
+    echo "7) 退出"
+    echo -e "${BLUE}========================================${NC}"
+    read -p "请选择 [1-7]: " choice
+    case $choice in
+        1) menu_speedtest ;;
+        2) menu_mtr ;;
+        3) menu_traceroute ;;
+        4) menu_ping ;;
+        5) menu_full ;;
+        6) menu_uninstall ;;
+        7) echo "bye!" ; exit 0 ;;
+        *) echo "无效" ; sleep 1 ; main_menu ;;
+    esac
+    main_menu
+}
+
+# ---------- 启动 ----------
+check_deps
+main_menu
+EOF
